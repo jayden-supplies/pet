@@ -1,20 +1,44 @@
 import Foundation
 
-/// Decodes the subset of Orca's persisted `last-status.json` entry shape
-/// (`PersistedAgentHookEventPayload` in `server-types.ts`) that we need.
-/// `JSONDecoder` ignores unknown keys by default, so extra fields Orca writes
-/// (prompt, toolName, model, ...) are simply skipped.
-private struct RawPersistedEntry: Codable {
-    let state: String
-    let workingMode: String?
-    let worktreeId: String?
-    let receivedAt: Double?
-    let stateStartedAt: Double?
-}
+/// Parses the subset of Orca's persisted `last-status.json` entry shape that
+/// we need, using loose JSONSerialization dictionaries rather than a strict
+/// Codable struct.
+///
+/// Why: real on-disk entries are NOT uniform. An entry that came from a
+/// "SubagentStop" hook event (observed live) nests `state`/`prompt`/`agentType`
+/// under a `payload` sub-object, while worktreeId/receivedAt/etc. stay at the
+/// top level — other entries put `state` directly at the top level. A strict
+/// Codable struct requiring a top-level `state` would fail to decode the
+/// *entire file* the instant one entry used the other shape (JSONDecoder has
+/// no per-entry recovery), silently zeroing out every pane's status. Parsing
+/// loosely and checking both locations per-entry is what actually survives
+/// Orca's real output.
+private func parseEntries(from data: Data) -> [AgentStatusEntry] {
+    guard let rawObject = try? JSONSerialization.jsonObject(with: data) else { return [] }
+    guard let root = rawObject as? [String: Any] else { return [] }
+    guard let entriesObj = root["entries"] as? [String: Any] else { return [] }
 
-private struct RawLastStatusFile: Codable {
-    let version: Int
-    let entries: [String: RawPersistedEntry]
+    var result: [AgentStatusEntry] = []
+    for (paneKey, value) in entriesObj {
+        guard let entry = value as? [String: Any] else { continue }
+        let payload = entry["payload"] as? [String: Any]
+        // `state` (and its close relatives) may live at the top level or
+        // nested under `payload`, depending on which hook event produced it.
+        let stateSource = payload ?? entry
+        guard let state = stateSource["state"] as? String else { continue }
+        let workingMode = stateSource["workingMode"] as? String
+        let worktreeId = entry["worktreeId"] as? String
+        let receivedAt = (entry["receivedAt"] as? NSNumber)?.doubleValue
+
+        result.append(AgentStatusEntry(
+            paneKey: paneKey,
+            state: state,
+            workingMode: workingMode,
+            worktreeId: worktreeId,
+            updatedAt: receivedAt ?? (Date().timeIntervalSince1970 * 1000)
+        ))
+    }
+    return result
 }
 
 /// Polls Orca's on-disk agent-status file — the exact file Orca itself uses
@@ -74,27 +98,16 @@ final class OrcaStatusWatcher {
             publish(entries: [])
             return
         }
-        guard let file = try? JSONDecoder().decode(RawLastStatusFile.self, from: data) else {
-            publish(entries: [])
-            return
-        }
-
-        let now = Date().timeIntervalSince1970 * 1000
-        let entries: [AgentStatusEntry] = file.entries.map { paneKey, raw in
-            AgentStatusEntry(
-                paneKey: paneKey,
-                state: raw.state,
-                workingMode: raw.workingMode,
-                worktreeId: raw.worktreeId,
-                updatedAt: raw.receivedAt ?? now
-            )
-        }
-        publish(entries: entries)
+        publish(entries: parseEntries(from: data))
     }
 
     private func publish(entries: [AgentStatusEntry]) {
         let now = Date().timeIntervalSince1970 * 1000
         let result = agentStateAnimation(entries: entries, retainedCount: retainedCount, now: now)
+        if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
+            FileHandle.standardError.write("[connor-pet] \(entries.count) entr(y/ies) -> \(result.animation)\n".data(using: .utf8)!)
+            for line in result.trace { FileHandle.standardError.write("  \(line.line)\n".data(using: .utf8)!) }
+        }
         DispatchQueue.main.async { [weak self] in
             self?.onUpdate?(result)
         }
