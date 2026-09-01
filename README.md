@@ -117,10 +117,6 @@ python3 scripts/build_sheet.py
 
 PokeAPI에서 리아코의 5세대 애니메이션 배틀 스프라이트를 다시 받아서 `totodile.codex-pet/{spritesheet.png,pet.json}`을 처음부터 재생성합니다 — 완전히 재현 가능하고, 바이너리 원본 에셋은 저장소에 커밋하지 않습니다.
 
-## 개발 워크플로우
-
-이 저장소는 별도 브랜치 전략 없이 `main` 하나로만 운영합니다. 기능 브랜치/PR 없이, 작업이 끝나면 바로 `main`에 커밋 후 push합니다.
-
 ## 크레딧 / 라이선스
 
 캐릭터 스프라이트는 Nintendo/Game Freak/Creatures Inc.의 포켓몬 에셋을 [PokeAPI](https://pokeapi.co/) 경유로 가져온 것으로, 개인/데모 용도로만 사용하고 독립된 에셋으로 재배포하지 않습니다. 그 외 이 저장소의 모든 코드(빌드 스크립트, Swift 앱, 미리보기 페이지)는 자유롭게 재사용해도 됩니다.
