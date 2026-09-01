@@ -35,7 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // origin, placing the window off-screen). screens.first is always the
         // primary display, origin (0,0), independent of window/key state.
         let screenFrame = NSScreen.screens.first?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let origin = CGPoint(x: screenFrame.maxX - size - 48, y: screenFrame.minY + 48)
+        let defaultOrigin = CGPoint(x: screenFrame.maxX - size - 48, y: screenFrame.minY + 48)
+        let origin = Self.savedOrigin(fallback: defaultOrigin)
         let contentRect = NSRect(x: origin.x, y: origin.y, width: size, height: size)
 
         let win = PetWindow(contentRect: contentRect)
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.frame = NSRect(x: 0, y: 0, width: size, height: size)
         view.onRequestWindowMove = { [weak win] newOrigin in
             win?.setFrameOrigin(newOrigin)
+            Self.saveOrigin(newOrigin)
         }
         win.contentView = view
         win.makeKeyAndOrderFront(nil)
@@ -120,5 +122,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    // MARK: - Window position persistence
+
+    private static let originDefaultsKey = "petWindowOrigin"
+
+    private static func saveOrigin(_ origin: CGPoint) {
+        UserDefaults.standard.set(["x": origin.x, "y": origin.y], forKey: originDefaultsKey)
+    }
+
+    // Falls back to `fallback` if nothing was saved yet, or if the saved spot
+    // no longer lands on any connected screen (e.g. monitor unplugged since).
+    private static func savedOrigin(fallback: CGPoint) -> CGPoint {
+        guard
+            let dict = UserDefaults.standard.dictionary(forKey: originDefaultsKey),
+            let x = dict["x"] as? CGFloat, let y = dict["y"] as? CGFloat
+        else { return fallback }
+
+        let saved = CGPoint(x: x, y: y)
+        let onScreen = NSScreen.screens.contains { $0.visibleFrame.insetBy(dx: -40, dy: -40).contains(saved) }
+        return onScreen ? saved : fallback
     }
 }
