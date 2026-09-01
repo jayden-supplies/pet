@@ -1,0 +1,5 @@
+scripts/.cache/
+scripts/__pycache__/
+ConnorPet/.build/
+ConnorPet/.swiftpm/
+.DS_Store

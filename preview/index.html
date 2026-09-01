@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>connor-pet — 리아코(Totodile) live preview</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: radial-gradient(circle at 30% 0%, #1b2a4a 0%, #0b1220 55%, #05070d 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Malgun Gothic", sans-serif;
+    color: #e8ecf8;
+  }
+  h1 { font-size: 16px; margin: 0 0 2px; }
+  h1 .sub { font-weight: 400; opacity: 0.55; font-size: 12px; }
+  p.lede { font-size: 11.5px; opacity: 0.65; margin: 0 0 18px; line-height: 1.6; max-width: 900px; }
+
+  #layout { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 18px; padding: 20px; align-items: start; }
+  @media (max-width: 980px) { #layout { grid-template-columns: 1fr; } }
+
+  .panel { background: rgba(10,14,26,0.72); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 14px 16px; }
+
+  .project { border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; background: rgba(255,255,255,0.02); }
+  .project-title { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .project-title .dot { width: 7px; height: 7px; border-radius: 50%; background: #3a4a70; }
+  .agent-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11.5px; }
+  .agent-row label { width: 74px; opacity: 0.6; flex-shrink: 0; }
+  .agent-row select { flex: 1; background: #1c2740; color: #e8ecf8; border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 4px 6px; font-size: 11.5px; }
+  .agent-row .stale-toggle { font-size: 10px; opacity: 0.55; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+
+  .label-heading { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.5; margin: 4px 0 8px; }
+
+  .retained-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; padding: 8px 10px; border: 1px dashed rgba(255,255,255,0.18); border-radius: 8px; }
+  .retained-row button { background: #1c2740; color: #e8ecf8; border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; width: 22px; height: 22px; cursor: pointer; }
+  .retained-row .count { font-weight: 700; min-width: 14px; text-align: center; }
+
+  #pet-stage { position: relative; height: 260px; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0)); margin-bottom: 10px; }
+  #pet-overlay { position: relative; width: 200px; height: 200px; cursor: grab; touch-action: none; }
+  #pet-overlay.dragging { cursor: grabbing; }
+  #pet-sprite {
+    width: 200px; height: 200px;
+    background-image: url('../totodile.codex-pet/spritesheet.png');
+    background-repeat: no-repeat;
+    image-rendering: pixelated;
+    filter: drop-shadow(0 10px 16px rgba(0,0,0,0.5));
+  }
+
+  .anim-badge { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); background: #4c6fff; color: #fff; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+
+  #trace { font-size: 11px; line-height: 1.7; background: rgba(0,0,0,0.35); border-radius: 8px; padding: 8px 10px; max-height: 140px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #trace div.hit { color: #ffd666; }
+  #trace div.skip { opacity: 0.4; }
+  #trace div.final { color: #7fd88a; font-weight: 700; margin-top: 4px; }
+
+  #interaction-hint { font-size:10.5px; opacity:.5; text-align:center; margin-bottom:10px; }
+  #credit { padding: 0 20px 20px; font-size: 10.5px; opacity: 0.4; }
+  #row-legend { font-size: 10.5px; opacity: .6; text-align: center; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div style="padding: 20px 20px 0;">
+  <h1>🐊 connor-pet <span class="sub">— 리아코(Totodile), real spritesheet.png + pet.json, real Orca state-machine logic</span></h1>
+  <p class="lede">
+    이 페이지는 <code>../totodile.codex-pet/spritesheet.png</code>를 실제 배경 이미지로 불러오고,
+    Orca 소스코드(<code>PetOverlay.tsx</code>의 <code>SpriteFrame</code>, <code>sprite-animation-css.ts</code>의 <code>buildSpriteAnimationCss</code>,
+    <code>pet-agent-state.ts</code>의 <code>selectPetAnimationName</code>)와 동일한 알고리즘으로 프레임을 스텝핑합니다.
+    Orca에 임포트하지 않고도 번들이 의도대로 동작하는지 여기서 먼저 확인할 수 있습니다.
+  </p>
+</div>
+
+<div id="layout">
+  <div class="panel" id="controls">
+    <div class="label-heading">프로젝트 &amp; 열려있는 에이전트 패널</div>
+    <div id="projects"></div>
+
+    <div class="label-heading" style="margin-top:14px;">닫혔지만 아직 리뷰 안 한 세션 (retained)</div>
+    <div class="retained-row">
+      <button id="retained-minus">−</button>
+      <span class="count" id="retained-count">0</span>
+      <button id="retained-plus">+</button>
+      <span style="opacity:.55;">개</span>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel" style="margin-bottom: 14px;">
+      <div id="pet-stage">
+        <div class="anim-badge" id="anim-badge">idle</div>
+        <div id="pet-overlay">
+          <div id="pet-sprite"></div>
+        </div>
+      </div>
+      <div id="row-legend"></div>
+      <div id="interaction-hint">드래그 = running-left/right · 마우스 오버 = jumping · 클릭 = waving · 아래 버튼 = failed</div>
+      <div style="display:flex; gap:8px; justify-content:center;">
+        <button id="fail-btn" style="background:#3a1c1c;color:#ffb3b3;border:1px solid #ff8a8a55;border-radius:8px;padding:6px 12px;font-size:11px;cursor:pointer;">💥 failed 강제 재생</button>
+      </div>
+      <div class="label-heading" style="margin-top:12px;">판정 로그 (agentStateAnimation 실행 추적)</div>
+      <div id="trace"></div>
+    </div>
+  </div>
+</div>
+
+<div id="credit">connor-pet · 리아코(Totodile) build · 스프라이트는 PokeAPI gen5 배틀 스프라이트를 가공(scripts/build_sheet.py) · 캐릭터 이미지 ⓒ Nintendo/Game Freak · 개인/데모 용도</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // Mirrors ../totodile.codex-pet/pet.json — kept inline because file:// pages
+  // can't fetch() local JSON without a server (image loads are fine, though).
+  var MANIFEST = {"id": "totodile-riako", "displayName": "\ub9ac\uc544\ucf54 (Totodile)", "description": "Custom connor-pet build: Totodile / \ub9ac\uc544\ucf54 reacts to live Orca agent/project status (idle/running/waiting/review/jumping/running-left/running-right), built from PokeAPI gen5 battle sprites.", "spritesheetPath": "spritesheet.png", "frame": {"width": 200, "height": 200}, "fps": 8, "defaultAnimation": "idle", "animations": {"idle": {"row": 0, "frames": 4, "frameDurationsMs": [900, 500, 500, 900]}, "running-right": {"row": 1, "frames": 4, "frameDurationsMs": [110, 110, 110, 110]}, "running-left": {"row": 2, "frames": 4, "frameDurationsMs": [110, 110, 110, 110]}, "waving": {"row": 3, "frames": 4, "frameDurationsMs": [160, 160, 160, 220]}, "jumping": {"row": 4, "frames": 4, "frameDurationsMs": [140, 140, 160, 160]}, "failed": {"row": 5, "frames": 4, "frameDurationsMs": [140, 140, 140, 240]}, "waiting": {"row": 6, "frames": 4, "frameDurationsMs": [800, 700, 700, 800]}, "running": {"row": 7, "frames": 4, "frameDurationsMs": [120, 120, 120, 120]}, "review": {"row": 8, "frames": 4, "frameDurationsMs": [220, 220, 220, 220]}}};
+
+  var FRAME = MANIFEST.frame.width;
+  // Sheet column count is fixed by scripts/build_sheet.py (COLS=4); rows = one per animation.
+  var SHEET_COLS = 4;
+  var SHEET_ROWS = Object.keys(MANIFEST.animations).length;
+
+  var PROJECTS = [
+    { name: '🅰️ web-app', agents: ['claude', 'codex'] },
+    { name: '🅱️ api-server', agents: ['claude'] },
+    { name: '🅲️ mobile', agents: ['claude'] }
+  ];
+  var STATE_OPTIONS = [
+    { value: 'none', label: '(에이전트 없음)' },
+    { value: 'working', label: 'working — 작업 중' },
+    { value: 'blocked', label: 'blocked — 승인 필요' },
+    { value: 'waiting', label: 'waiting — 입력 대기' },
+    { value: 'done', label: 'done — 완료' }
+  ];
+
+  var projectsEl = document.getElementById('projects');
+  var slots = [];
+
+  PROJECTS.forEach(function (proj) {
+    var box = document.createElement('div');
+    box.className = 'project';
+    var title = document.createElement('div');
+    title.className = 'project-title';
+    title.innerHTML = '<span class="dot"></span>' + proj.name;
+    box.appendChild(title);
+
+    proj.agents.forEach(function (agentId) {
+      var row = document.createElement('div');
+      row.className = 'agent-row';
+      var label = document.createElement('label');
+      label.textContent = agentId;
+      row.appendChild(label);
+
+      var select = document.createElement('select');
+      STATE_OPTIONS.forEach(function (opt) {
+        var o = document.createElement('option');
+        o.value = opt.value; o.textContent = opt.label;
+        select.appendChild(o);
+      });
+      row.appendChild(select);
+
+      var staleWrap = document.createElement('label');
+      staleWrap.className = 'stale-toggle';
+      var staleCb = document.createElement('input');
+      staleCb.type = 'checkbox';
+      staleWrap.appendChild(staleCb);
+      staleWrap.appendChild(document.createTextNode('stale'));
+      row.appendChild(staleWrap);
+
+      box.appendChild(row);
+      var slot = { label: proj.name + '/' + agentId, selectEl: select, staleEl: staleCb };
+      slots.push(slot);
+      select.addEventListener('change', recompute);
+      staleCb.addEventListener('change', recompute);
+    });
+    projectsEl.appendChild(box);
+  });
+
+  slots[0].selectEl.value = 'working';
+  slots[1].selectEl.value = 'done';
+  slots[2].selectEl.value = 'blocked';
+
+  var retainedCount = 0;
+  var retainedCountEl = document.getElementById('retained-count');
+  document.getElementById('retained-plus').addEventListener('click', function () {
+    retainedCount++; retainedCountEl.textContent = retainedCount; recompute();
+  });
+  document.getElementById('retained-minus').addEventListener('click', function () {
+    retainedCount = Math.max(0, retainedCount - 1); retainedCountEl.textContent = retainedCount; recompute();
+  });
+
+  // ---- Ported verbatim from pet-agent-state.ts ----
+  function agentStateAnimation(entries, retained) {
+    var trace = [];
+    var hasWorking = false, hasDone = false;
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i];
+      if (e.stale) { trace.push({ cls: 'skip', text: e.label + ': stale → 무시' }); continue; }
+      if (e.state === 'blocked' || e.state === 'waiting') {
+        trace.push({ cls: 'hit', text: e.label + ': ' + e.state + ' 감지 → 최우선 규칙, 즉시 반환' });
+        trace.push({ cls: 'final', text: "결과 = 'waiting'" });
+        return { anim: 'waiting', trace: trace };
+      }
+      if (e.state === 'working') { hasWorking = true; trace.push({ cls: '', text: e.label + ': working → 후보' }); }
+      else if (e.state === 'done') { hasDone = true; trace.push({ cls: '', text: e.label + ': done → 후보' }); }
+      else { trace.push({ cls: 'skip', text: e.label + ': (없음)' }); }
+    }
+    if (hasWorking) { trace.push({ cls: 'final', text: "→ 결과 = 'running'" }); return { anim: 'running', trace: trace }; }
+    if (hasDone || retained > 0) { trace.push({ cls: 'final', text: "→ 결과 = 'review'" }); return { anim: 'review', trace: trace }; }
+    trace.push({ cls: 'final', text: "→ 결과 = 'idle'" });
+    return { anim: 'idle', trace: trace };
+  }
+
+  function nextPetDragAnimation(current, deltaX) {
+    if (deltaX >= 4) return { animation: 'running-right', accepted: true };
+    if (deltaX <= -4) return { animation: 'running-left', accepted: true };
+    return { animation: current, accepted: false };
+  }
+
+  // ---- Ported verbatim from sprite-animation-css.ts: buildSpriteAnimationCss ----
+  var MAX_FRAME_DURATION_MS = 60000;
+  function validFrameDurations(frameDurationsMs, frames) {
+    if (Array.isArray(frameDurationsMs) && frameDurationsMs.length === frames &&
+        frameDurationsMs.every(function (ms) { return Number.isFinite(ms) && ms > 0 && ms <= MAX_FRAME_DURATION_MS; })) {
+      return frameDurationsMs;
+    }
+    return null;
+  }
+  function stepEndStops(durations, totalMs, frameWidth, rowOffsetY) {
+    var stops = []; var elapsedMs = 0; var previousPct = -1;
+    for (var index = 0; index < durations.length; index++) {
+      var pct = +((elapsedMs / totalMs) * 100).toFixed(4);
+      if (pct <= previousPct || pct >= 100) return null;
+      previousPct = pct;
+      var x = -(index * frameWidth);
+      stops.push(pct + '% { background-position: ' + x + 'px ' + rowOffsetY + 'px; }');
+      elapsedMs += durations[index];
+    }
+    return stops;
+  }
+  function buildSpriteAnimationCss(opts) {
+    var name = 'pet-' + opts.keyframesId;
+    var durations = validFrameDurations(opts.frameDurationsMs, opts.frames);
+    if (durations) {
+      var totalMs = durations.reduce(function (s, ms) { return s + ms; }, 0);
+      var stops = stepEndStops(durations, totalMs, opts.frameWidth, opts.rowOffsetY);
+      if (stops) {
+        return { keyframesCss: '@keyframes ' + name + ' { ' + stops.join(' ') + ' }', animationCss: name + ' ' + (totalMs / 1000) + 's step-end infinite' };
+      }
+    }
+    var duration = Math.max(0.1, opts.frames / Math.max(0.1, opts.fps));
+    var endX = -(opts.frames * opts.frameWidth);
+    return {
+      keyframesCss: '@keyframes ' + name + ' { from { background-position: 0px ' + opts.rowOffsetY + 'px; } to { background-position: ' + endX + 'px ' + opts.rowOffsetY + 'px; } }',
+      animationCss: name + ' ' + duration + 's steps(' + opts.frames + ') infinite'
+    };
+  }
+
+  var overlay = document.getElementById('pet-overlay');
+  var sprite = document.getElementById('pet-sprite');
+  var badge = document.getElementById('anim-badge');
+  var traceEl = document.getElementById('trace');
+  var rowLegend = document.getElementById('row-legend');
+  var styleTag = document.createElement('style');
+  document.head.appendChild(styleTag);
+
+  var dragging = false, dragAnimation = null, hovering = false, oneShot = null, dragBaselineX = 0;
+  var lastBase = 'idle';
+  var restartKey = 0;
+  var lastRenderedRow = -1;
+
+  function applyAnimation(name) {
+    var anim = MANIFEST.animations[name] || MANIFEST.animations[MANIFEST.defaultAnimation];
+    var row = anim.row;
+    if (row !== lastRenderedRow) { restartKey++; lastRenderedRow = row; }
+    var rowOffsetY = -(row * FRAME);
+    var css = buildSpriteAnimationCss({
+      keyframesId: 'totodile-' + row + '-' + restartKey,
+      frames: anim.frames,
+      fps: MANIFEST.fps,
+      frameWidth: FRAME,
+      rowOffsetY: rowOffsetY,
+      frameDurationsMs: anim.frameDurationsMs
+    });
+    styleTag.textContent = css.keyframesCss;
+    sprite.style.backgroundSize = (FRAME * SHEET_COLS) + 'px ' + (FRAME * SHEET_ROWS) + 'px';
+    sprite.style.backgroundPosition = '0px ' + rowOffsetY + 'px';
+    sprite.style.animation = css.animationCss;
+    rowLegend.textContent = 'row ' + row + ' · "' + name + '" · ' + anim.frames + ' frames';
+  }
+
+  function recompute() {
+    var entries = slots.map(function (s) { return { label: s.label, state: s.selectEl.value, stale: s.staleEl.checked }; });
+    var result = agentStateAnimation(entries, retainedCount);
+    traceEl.innerHTML = result.trace.map(function (t) { return '<div class="' + t.cls + '">' + t.text.replace(/</g, '&lt;') + '</div>'; }).join('');
+    render(result.anim);
+  }
+
+  function render(base) {
+    lastBase = base;
+    var name;
+    if (oneShot) name = oneShot;
+    else if (dragging) name = dragAnimation || base;
+    else if (hovering) name = 'jumping';
+    else name = base;
+
+    // Why: real PetOverlay.tsx never CSS-flips — running-left is its own sheet
+    // row (already mirrored at build time), so flipping here would un-mirror it.
+    badge.textContent = name;
+    applyAnimation(name);
+  }
+
+  overlay.addEventListener('pointerdown', function (e) {
+    overlay.setPointerCapture(e.pointerId);
+    dragging = true; dragAnimation = null; dragBaselineX = e.clientX;
+    overlay.classList.add('dragging'); overlay.dataset.moved = '0';
+    render(lastBase);
+  });
+  overlay.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    var deltaX = e.clientX - dragBaselineX;
+    var next = nextPetDragAnimation(dragAnimation, deltaX);
+    dragAnimation = next.animation;
+    if (next.accepted) { dragBaselineX = e.clientX; overlay.dataset.moved = '1'; }
+    render(lastBase);
+  });
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false; dragAnimation = null; overlay.classList.remove('dragging');
+    render(lastBase);
+  }
+  overlay.addEventListener('pointerup', endDrag);
+  overlay.addEventListener('pointercancel', endDrag);
+  overlay.addEventListener('mouseenter', function () { hovering = true; render(lastBase); });
+  overlay.addEventListener('mouseleave', function () { hovering = false; render(lastBase); });
+  overlay.addEventListener('click', function () {
+    if (overlay.dataset.moved === '1' || oneShot) return;
+    oneShot = 'waving';
+    render(lastBase);
+    setTimeout(function () { oneShot = null; render(lastBase); }, 800);
+  });
+  document.getElementById('fail-btn').addEventListener('click', function () {
+    if (oneShot) return;
+    oneShot = 'failed';
+    render(lastBase);
+    setTimeout(function () { oneShot = null; render(lastBase); }, 900);
+  });
+
+  recompute();
+})();
+</script>
+</body>
+</html>
