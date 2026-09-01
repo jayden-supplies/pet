@@ -1,5 +1,7 @@
 # connor-pet
 
+[한국어](README.ko.md)
+
 A desktop pet — 리아코 (Totodile, #158) — that reacts to your real
 [Orca](https://github.com/stablyai/orca) agent/project status. Built as a
 standalone macOS app, **not** as an Orca-imported `.codex-pet` bundle: this
