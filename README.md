@@ -46,6 +46,16 @@ project/worktree you have open in Orca:
 Hover the pet → **jumping**. Drag it → **running-left**/**running-right**,
 following the pointer.
 
+### What each state actually looks like
+
+![idle / running / waiting / review](docs/pet-states.png)
+
+`idle` and `running` are mostly distinguished by motion (a slow ambient bob
+vs. a fast bounce) rather than color, so they read closer together as static
+frames than they do live. `waiting` is desaturated, `review` gets a warm
+golden tint — both ported directly from `codex-pet-sprite-defaults.ts`'s
+per-row treatment.
+
 ## Layout
 
 ```

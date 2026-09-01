@@ -36,6 +36,15 @@ Orca의 훅 서버는 열려있는 모든 에이전트 패널의 상태를 250ms
 
 마우스를 올리면 **jumping**, 드래그하면 마우스를 따라 **running-left**/**running-right**.
 
+### 상태별로 실제 어떻게 보이는지
+
+![idle / running / waiting / review](docs/pet-states.png)
+
+`idle`과 `running`은 색이 아니라 주로 움직임(느린 숨쉬기 vs 빠른 바운스)으로 구분돼서,
+정지 이미지로 보면 실제로 움직일 때보다 더 비슷해 보입니다. `waiting`은 채도를 낮췄고
+`review`는 따뜻한 골드 톤이 들어갑니다 — 둘 다 `codex-pet-sprite-defaults.ts`의 행별
+처리를 그대로 포팅한 것입니다.
+
 ## 폴더 구조
 
 ```
