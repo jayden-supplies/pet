@@ -6,10 +6,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var watcher: OrcaStatusWatcher?
 
-    // Mirrors Orca's own pet-overlay sizing (`src/shared/pet-types.ts`):
-    // PET_SIZE_MIN=60, PET_SIZE_MAX=360, PET_SIZE_DEFAULT=180 — independent of
-    // the sprite sheet's native 200x200 frame, which is scaled to fit.
-    private let petSize: CGFloat = 180
+    // Orca's own default (PET_SIZE_DEFAULT=180) still read as "big" next to the
+    // small nav-badge-style pet icon the user is comparing against — sized
+    // near Orca's PET_SIZE_MIN=60 floor instead.
+    private let petSize: CGFloat = 90
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu-bar utility, no Dock icon
