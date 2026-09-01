@@ -1,7 +1,7 @@
 {
   "id": "totodile-riako",
   "displayName": "리아코 (Totodile)",
-  "description": "Custom connor-pet build: Totodile / 리아코 reacts to live Orca agent/project status (idle/running/waiting/review/jumping/running-left/running-right), built from PokeAPI gen5 battle sprites.",
+  "description": "Custom connor-pet build: Totodile / 리아코 reacts to live Orca agent/project status, skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites.",
   "spritesheetPath": "spritesheet.png",
   "frame": {
     "width": 200,
