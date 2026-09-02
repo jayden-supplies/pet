@@ -4,7 +4,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: PetWindow?
     private var petView: PetView?
     private var statusItem: NSStatusItem?
-    private var watcher: OrcaStatusWatcher?
     private var bubble: SpeechBubbleWindow?
 
     // 사용자가 요청한 브리핑 범위: 최근 6시간, 최근 이용 순 5개 세션,
@@ -90,12 +89,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setUpStatusItem()
 
-        let w = OrcaStatusWatcher()
-        w.onUpdate = { [weak self] result in
-            self?.petView?.setBaseAnimation(result.animation)
-        }
-        w.start()
-        watcher = w
+        selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
+        startWatcher(for: selectedStatusSource)
 
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
             let text = briefingText() ?? "(브리핑 없음)"
@@ -144,8 +139,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lines.append(line)
         }
         return lines.joined(separator: "\n")
-        selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
-        startWatcher(for: selectedStatusSource)
     }
 
     private func setUpStatusItem() {
