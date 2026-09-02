@@ -42,22 +42,22 @@ python3 scripts/install_claude_hooks.py --uninstall  # connor-pet이 추가한 �
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py working" }] }
+      { "hooks": [{ "type": "command", "command": "python3 /path/to/pet/scripts/claude_hook_status.py working" }] }
     ],
     "PreToolUse": [
-      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py working" }] }
+      { "hooks": [{ "type": "command", "command": "python3 /path/to/pet/scripts/claude_hook_status.py working" }] }
     ],
     "PermissionRequest": [
-      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py blocked" }] }
+      { "hooks": [{ "type": "command", "command": "python3 /path/to/pet/scripts/claude_hook_status.py blocked" }] }
     ],
     "Notification": [
-      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py blocked" }] }
+      { "hooks": [{ "type": "command", "command": "python3 /path/to/pet/scripts/claude_hook_status.py blocked" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py done" }] }
+      { "hooks": [{ "type": "command", "command": "python3 /path/to/pet/scripts/claude_hook_status.py done" }] }
     ],
     "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py remove" }] }
+      { "hooks": [{ "type": "command", "command": "python3 /path/to/pet/scripts/claude_hook_status.py remove" }] }
     ]
   }
 }
