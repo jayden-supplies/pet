@@ -4,10 +4,11 @@ import AppKit
 /// (drag → running-left/right, hover → jumping), mirroring
 /// `usePetPointerInteraction.ts` + `PetOverlay.tsx`'s render precedence.
 final class PetView: NSView {
-    /// Height reserved at the bottom of the view for the XP bar (game convention
-    /// puts progression bars along the bottom, not overhead — overhead space
-    /// reads as health/status). The sprite renders in the square above it.
-    static let barAreaHeight: CGFloat = 18
+    /// Height reserved at the bottom of the view for the XP bar + its usage
+    /// label (game convention puts progression bars along the bottom, not
+    /// overhead — overhead space reads as health/status). The sprite renders in
+    /// the square above it.
+    static let barAreaHeight: CGFloat = 28
 
     private var spriteSheet: SpriteSheet
     private var trackingArea: NSTrackingArea?
@@ -21,6 +22,9 @@ final class PetView: NSView {
     // sets the fill color, so the bar's color tracks the pet's evolution stage.
     private var progressPercent: Double = 0
     private var progressStage: Int = 0
+    // Small text drawn above the bar: cumulative usage / budget (%). Empty until
+    // the first weekly-usage scan completes.
+    private var usageLabel = ""
     // When true the bar is always drawn; when false it only appears on hover
     // (menu-bar toggle, see AppDelegate). Default off.
     private var barAlwaysVisible = false
@@ -99,6 +103,13 @@ final class PetView: NSView {
         needsDisplay = true
     }
 
+    /// The small "누적 / 최대 (%)" usage text shown above the bar.
+    func setUsageLabel(_ text: String) {
+        guard text != usageLabel else { return }
+        usageLabel = text
+        needsDisplay = true
+    }
+
     // MARK: - Public: swapping the active character
 
     /// Switches the rendered character (e.g. via the menu-bar picker) while
@@ -158,17 +169,19 @@ final class PetView: NSView {
         scheduleNextFrame()
     }
 
-    /// The square the sprite renders into. With the bar enabled it's the view
-    /// minus the reserved bottom strip; with the bar disabled the sprite uses
-    /// the whole view so the pet stays flush at the bottom.
+    /// The sprite always renders into a `width`×`width` square (never stretched):
+    /// top-aligned when the bar strip is reserved below it, bottom-aligned (flush
+    /// with the dock) when the bar is disabled and the strip is unused.
     private var spriteRect: NSRect {
-        guard barEnabled else { return bounds }
-        return NSRect(x: 0, y: Self.barAreaHeight, width: bounds.width, height: bounds.height - Self.barAreaHeight)
+        let side = bounds.width
+        let y = barEnabled ? bounds.height - side : 0
+        return NSRect(x: 0, y: y, width: side, height: side)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let frames = currentFrames, frames.images.indices.contains(frameIndex) else { return }
         let image = frames.images[frameIndex]
+        let sprite = spriteRect
         // Why: .sourceOver blends onto whatever pixels are already in the layer's
         // backing store. Since every frame has transparent margins, switching to a
         // differently-shaped sprite (e.g. via the menu-bar pet picker, or even
@@ -176,34 +189,38 @@ final class PetView: NSView {
         // previous frame visible wherever the new frame is transparent but the old
         // one wasn't. .copy overwrites the whole rect (color + alpha) with the new
         // frame's pixels instead of blending, so there's nothing left to bleed through.
-        image.draw(in: spriteRect, from: .zero, operation: .copy, fraction: 1.0)
+        image.draw(in: sprite, from: .zero, operation: .copy, fraction: 1.0)
 
-        guard barEnabled else { return } // evolution off → no bar, sprite owns the whole view
-
-        // The bar strip is never touched by the sprite draw above, so clear it
-        // to transparent each frame (.copy) before optionally drawing the bar —
-        // otherwise a hidden bar (hover-only mode, pointer gone) would linger.
-        let barArea = NSRect(x: 0, y: 0, width: bounds.width, height: Self.barAreaHeight)
+        // Everything outside the sprite square is the reserved strip; the sprite
+        // draw never touches it, so clear it to transparent each frame (.copy) —
+        // otherwise a hidden bar (hover-only mode, or after disabling evolution)
+        // would linger.
+        let strip = NSRect(x: 0, y: sprite.minY > 0 ? 0 : sprite.maxY,
+                           width: bounds.width, height: bounds.height - sprite.height)
         NSColor.clear.setFill()
         NSGraphicsContext.current?.compositingOperation = .copy
-        barArea.fill()
+        strip.fill()
         NSGraphicsContext.current?.compositingOperation = .sourceOver
 
-        if barAlwaysVisible || hovering {
-            drawXPBar(in: barArea)
+        if barEnabled, barAlwaysVisible || hovering {
+            drawXPBar(in: strip)
         }
     }
 
     private func drawXPBar(in area: NSRect) {
-        let hInset: CGFloat = 12
-        let barHeight: CGFloat = 8
+        let hInset: CGFloat = 10
+        let barHeight: CGFloat = 7
         let track = NSRect(
             x: area.minX + hInset,
-            y: area.midY - barHeight / 2,
+            y: area.minY + 3, // gauge sits at the bottom of the strip
             width: area.width - hInset * 2,
             height: barHeight
         )
         let radius = barHeight / 2
+
+        // Cumulative-usage label above the gauge (drawn even at 0% fill).
+        drawUsageLabel(in: NSRect(x: area.minX, y: track.maxY + 1,
+                                  width: area.width, height: area.maxY - track.maxY - 2))
 
         // Track (empty portion) — dark, semi-transparent, faint border.
         let trackPath = NSBezierPath(roundedRect: track, xRadius: radius, yRadius: radius)
@@ -225,6 +242,25 @@ final class PetView: NSView {
         let glossPath = NSBezierPath(roundedRect: gloss, xRadius: radius / 2, yRadius: radius / 2)
         NSColor(calibratedWhite: 1, alpha: 0.30).setFill()
         glossPath.fill()
+    }
+
+    private func drawUsageLabel(in rect: NSRect) {
+        guard !usageLabel.isEmpty, rect.height > 4 else { return }
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor(calibratedWhite: 0, alpha: 0.85)
+        shadow.shadowBlurRadius = 1.5
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 8.5, weight: .semibold),
+            .foregroundColor: NSColor(calibratedWhite: 1, alpha: 0.92),
+            .paragraphStyle: style,
+            .shadow: shadow,
+        ]
+        let text = usageLabel as NSString
+        let textHeight = text.size(withAttributes: attrs).height
+        let drawRect = NSRect(x: rect.minX, y: rect.midY - textHeight / 2, width: rect.width, height: textHeight)
+        text.draw(in: drawRect, withAttributes: attrs)
     }
 
     /// Fill color per evolution stage: green (base) → blue (1st) → gold (final),

@@ -52,6 +52,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // form regardless of XP. Default on.
     private var evolutionEnabled = true
 
+    // Denominator of the bar's "누적 / 최대 (%)" usage label. The account's real
+    // quota can't be read from disk (see WeeklyUsageReader), so it's a menu
+    // choice, default 100M. Presets span the values that came up (200k context
+    // window ↔ 100M-scale weekly budgets).
+    private var maxTokenBudget: Double = 100_000_000
+    private static let budgetPresets: [Double] = [200_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000]
+    // Rolling 7-day cumulative token usage (numerator of the label), recomputed
+    // on a timer off the main thread. See refreshWeeklyUsage.
+    private let weeklyUsageReader = WeeklyUsageReader(
+        projectsDir: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"))
+    private let usageQueue = DispatchQueue(label: "connorpet.weekly-usage")
+    private var weeklyCumulative: Double = 0
+    private var usageTimer: Timer?
+
     // Whether the XP bar is always shown vs. only on hover (menu toggle).
     private var barAlwaysVisible = true
     // Live XP state, so re-selecting a pet re-derives the right evolved form.
@@ -104,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         evolutionThresholds = Self.savedEvolutionThresholds(fallback: XPModel.stageThresholds)
         evolutionEnabled = Self.savedEvolutionEnabled(fallback: true)
         view.setBarEnabled(evolutionEnabled) // evolution off → no bar at all
+        maxTokenBudget = Self.savedMaxTokenBudget(fallback: 100_000_000)
         view.onRequestWindowMove = { [weak win] newOrigin in
             win?.setFrameOrigin(newOrigin)
             Self.saveOrigin(newOrigin)
@@ -121,6 +136,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
         startWatcher(for: selectedStatusSource)
+
+        // Weekly usage is a heavy full-tree scan, so refresh it on a slow timer
+        // (30s) off the main thread rather than on every status poll.
+        refreshWeeklyUsage()
+        let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in self?.refreshWeeklyUsage() }
+        RunLoop.main.add(t, forMode: .common)
+        usageTimer = t
+    }
+
+    // MARK: - Cumulative-usage label
+
+    private func refreshWeeklyUsage() {
+        usageQueue.async { [weak self] in
+            guard let self else { return }
+            let total = self.weeklyUsageReader.total()
+            DispatchQueue.main.async {
+                self.weeklyCumulative = total
+                self.updateUsageLabel()
+            }
+        }
+    }
+
+    private func updateUsageLabel() {
+        let label = XPModel.usageLabel(cumulative: weeklyCumulative, max: maxTokenBudget)
+        petView?.setUsageLabel(label)
+        if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
+            FileHandle.standardError.write("[connor-pet] usage label: \(label)\n".data(using: .utf8)!)
+        }
     }
 
     private func setUpStatusItem() {
@@ -179,6 +222,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         evoMenu.addItem(makeThresholdSubmenu(title: "2단계 진화", stageIndex: 1))
         evoItem.submenu = evoMenu
         menu.addItem(evoItem)
+
+        // Denominator for the bar's usage label (누적 / 최대). Presets only —
+        // the real quota isn't readable from disk.
+        let budgetItem = NSMenuItem(title: "최대 토큰 (라벨): \(XPModel.formatTokens(maxTokenBudget))", action: nil, keyEquivalent: "")
+        let budgetMenu = NSMenu()
+        for preset in Self.budgetPresets {
+            let sub = NSMenuItem(title: XPModel.formatTokens(preset), action: #selector(selectBudget(_:)), keyEquivalent: "")
+            sub.target = self
+            sub.representedObject = NSNumber(value: preset)
+            sub.state = (abs(preset - maxTokenBudget) < 1) ? .on : .off
+            budgetMenu.addItem(sub)
+        }
+        budgetItem.submenu = budgetMenu
+        menu.addItem(budgetItem)
 
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
@@ -244,6 +301,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static func pct(_ fraction: Double) -> String { "\(Int((fraction * 100).rounded()))%" }
+
+    @objc private func selectBudget(_ sender: NSMenuItem) {
+        guard let value = (sender.representedObject as? NSNumber)?.doubleValue, value != maxTokenBudget else { return }
+        maxTokenBudget = value
+        Self.saveMaxTokenBudget(value)
+        updateUsageLabel() // reformat with the existing cumulative — no rescan needed
+        rebuildMenu()
+    }
 
     @objc private func selectPet(_ sender: NSMenuItem) {
         guard let slug = sender.representedObject as? String, slug != selectedPetSlug else { return }
@@ -451,6 +516,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func saveEvolutionEnabled(_ enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: evolutionEnabledDefaultsKey)
+    }
+
+    private static let maxTokenBudgetDefaultsKey = "maxTokenBudget"
+
+    private static func saveMaxTokenBudget(_ value: Double) {
+        UserDefaults.standard.set(value, forKey: maxTokenBudgetDefaultsKey)
+    }
+
+    // Falls back to `fallback` (100M) when nothing valid (> 0) was saved.
+    private static func savedMaxTokenBudget(fallback: Double) -> Double {
+        guard UserDefaults.standard.object(forKey: maxTokenBudgetDefaultsKey) != nil else { return fallback }
+        let saved = UserDefaults.standard.double(forKey: maxTokenBudgetDefaultsKey)
+        return saved > 0 ? saved : fallback
     }
 
     // Defaults to `fallback` (true — evolution on) when nothing saved yet.

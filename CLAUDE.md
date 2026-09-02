@@ -8,9 +8,9 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
   - `Sources/ConnorPet/OrcaStatusWatcher.swift` — `last-status.json` 폴링(1s) + 상태 집계 (Orca 소스)
   - `Sources/ConnorPet/ClaudeCodeStatusWatcher.swift` — `~/.claude/sessions/*.json`(항상) + `~/.claude/connor-pet-status.json`(훅 설치 시)을 250ms마다 폴링해 병합 (Claude Code 소스, 기본값)
   - `Sources/ConnorPet/PetAnimationState.swift` — 우선순위 로직 포팅 + `AgentStatusWatching` 프로토콜 (`acknowledgeDone()`으로 헤롱헤롱 호버-해제) + 토큰/진화 필드
-  - `Sources/ConnorPet/TokenUsage.swift` — 트랜스크립트 JSONL에서 문맥 창 사용량(마지막 메시지 `input+cache_read+cache_creation`)을 읽음(`TranscriptTokenReader`, mtime 캐시) + 경험치%/진화단계/바 채움(다음 임계치까지 정규화) 매핑(`XPModel`). 단위 테스트: `Tests/ConnorPetTests/`
+  - `Sources/ConnorPet/TokenUsage.swift` — 문맥 창 사용량(마지막 메시지 `input+cache_read+cache_creation`, `TranscriptTokenReader`, 바용) + 최근 7일 누적 사용량(전체 트랜스크립트 캐시읽기까지 합산, `WeeklyUsageReader`, 라벨용) + 경험치%/진화단계/바 채움(다음 임계치까지 정규화)/누적 라벨 포맷 매핑(`XPModel`). 단위 테스트: `Tests/ConnorPetTests/`
   - `Sources/ConnorPet/SpriteSheet.swift`, `PetView.swift`(펫 아래 경험치 바 포함), `PetWindow.swift` — 렌더링
-  - `Sources/ConnorPet/AppDelegate.swift` — 앱 연결, 메뉴바 아이콘/펫 선택/소스 선택/경험치 바 토글/진화 사용 토글/진화 % 설정 메뉴 + 경험치%에 따른 진화 스프라이트 교체(`evolutionChains`, 임계치·on-off는 사용자 설정)
+  - `Sources/ConnorPet/AppDelegate.swift` — 앱 연결, 메뉴바 아이콘/펫 선택/소스 선택/경험치 바 토글/진화 사용 토글/진화 % 설정/최대 토큰(라벨 분모) 메뉴 + 경험치%에 따른 진화 스프라이트 교체(`evolutionChains`, 임계치·on-off·최대예산은 사용자 설정) + 30초 주기 주간 누적 사용량 갱신
   - `Sources/ConnorPet/Resources/pets/<slug>/` — 펫별 `spritesheet.png` + `pet.json` 번들 사본
 - `<slug>.codex-pet/` (totodile/ditto/charmander/squirtle/geodude/eevee/chikorita/torchic) — Orca에 직접 임포트 가능한 번들
 - `scripts/build_sheet.py` — PokeAPI에서 스프라이트를 다시 받아 각 펫의 시트를 재생성 (`PETS` 리스트가 소스 오브 트루스)
