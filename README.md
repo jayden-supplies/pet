@@ -1,6 +1,6 @@
 # connor-pet
 
-실제 [Orca](https://github.com/stablyai/orca)의 프로젝트/에이전트 상태에 반응하는 데스크톱 펫 — 리아코 (Totodile, #158). Orca에 임포트하는 `.codex-pet` 번들이 아니라, **완전히 별개의 macOS 앱**으로 만들었습니다. Orca와 다른 프로세스로 떠 있으면서, 바깥에서 Orca의 상태를 읽어옵니다.
+실제 [Orca](https://github.com/stablyai/orca)의 프로젝트/에이전트 상태에 반응하는 데스크톱 펫 — 리아코 (Totodile, #158) 또는 메타몽 (Ditto, #132), 메뉴바 아이콘에서 언제든 전환 가능합니다. Orca에 임포트하는 `.codex-pet` 번들이 아니라, **완전히 별개의 macOS 앱**으로 만들었습니다. Orca와 다른 프로세스로 떠 있으면서, 바깥에서 Orca의 상태를 읽어옵니다.
 
 ## 어떻게 가능한가
 
@@ -60,12 +60,15 @@ Orca의 훅 서버는 열려있는 모든 에이전트 패널의 상태를 250ms
 ## 폴더 구조
 
 ```
-totodile.codex-pet/     Orca에 직접 임포트 가능한 진짜 번들 (Settings → Experimental → Pet → Import)
+totodile.codex-pet/     리아코(Totodile) Orca 임포트용 번들 (Settings → Experimental → Pet → Import)
   pet.json                 매니페스트: 9행 스프라이트 레이아웃, 프레임별 타이밍
   spritesheet.png            800x1800, 4열 x 9행, 프레임 200x200
 
-scripts/build_sheet.py   재현 가능한 생성 스크립트 — PokeAPI의 5세대 배틀 스프라이트를
-                          다시 받아서 처음부터 시트를 만듭니다 (`python3 scripts/build_sheet.py`)
+ditto.codex-pet/         메타몽(Ditto) Orca 임포트용 번들 — 위와 동일한 구조
+
+scripts/build_sheet.py   재현 가능한 생성 스크립트 — `PETS` 리스트에 등록된 각 포켓몬마다
+                          PokeAPI의 5세대 배틀 스프라이트를 받아서 `<slug>.codex-pet/`과
+                          ConnorPet 앱의 번들 리소스를 함께 재생성합니다 (`python3 scripts/build_sheet.py`)
 
 scripts/simulate_agent.py  실제 에이전트 없이 테스트하기 위한 도구. last-status.json에
                              가짜 패널 상태를 주입/삭제합니다 (아래 "테스트하기" 참고)
@@ -82,8 +85,8 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
     SpriteSheet.swift           spritesheet.png를 애니메이션별 프레임 배열로 자름
     PetView.swift                프레임 렌더링, 호버/드래그 처리
     PetWindow.swift               테두리 없는 투명, 항상 위에 뜨는 NSWindow
-    AppDelegate.swift              전체 연결 + 메뉴바 Quit 항목
-    Resources/                     spritesheet.png + pet.json 번들 사본
+    AppDelegate.swift              전체 연결 + 메뉴바 포켓몬 선택/Quit 메뉴
+    Resources/pets/<slug>/          펫별 spritesheet.png + pet.json 번들 사본 (totodile, ditto)
 ```
 
 ## 실행 방법
@@ -93,7 +96,7 @@ cd ConnorPet
 swift run
 ```
 
-메뉴바에 작은 포켓볼 아이콘이 생깁니다 (우클릭 → Quit으로 종료). 펫 자체는 화면 우측 하단 근처에 떠서 다른 창들 위에, 모든 Space에서 보입니다. Orca가 안 깔려있거나 활동 중인 패널이 없으면 그냥 idle 상태로 가만히 있습니다.
+메뉴바에 작은 포켓볼 아이콘이 생깁니다. 클릭하면 리아코(Totodile)/메타몽(Ditto) 중 원하는 펫을 고를 수 있고(체크 표시가 현재 선택), 맨 아래 Quit으로 종료합니다. 선택한 펫은 다음 실행 때도 그대로 복원됩니다. 펫 자체는 화면 우측 하단 근처에 떠서 다른 창들 위에, 모든 Space에서 보입니다. Orca가 안 깔려있거나 활동 중인 패널이 없으면 그냥 idle 상태로 가만히 있습니다.
 
 크기는 Orca 자체 기본값(`PET_SIZE_DEFAULT=180`)보다 작게, `90pt`로 맞춰뒀습니다 (`AppDelegate.swift`의 `petSize`). 더 키우거나 줄이고 싶으면 이 값만 바꾸면 됩니다.
 
@@ -118,7 +121,7 @@ CONNORPET_DEBUG=1 swift run
 
 ## Orca 안에서 직접 쓰고 싶다면
 
-Orca 자체 펫으로 리아코를 쓰고 싶으면(Settings → Experimental → Pet → Import), `totodile.codex-pet/` 폴더를 그대로 임포터에 지정하면 됩니다.
+Orca 자체 펫으로 쓰고 싶으면(Settings → Experimental → Pet → Import), 리아코는 `totodile.codex-pet/`, 메타몽은 `ditto.codex-pet/` 폴더를 그대로 임포터에 지정하면 됩니다.
 
 ## 스프라이트 시트 다시 만들기
 
@@ -127,7 +130,7 @@ pip install pillow
 python3 scripts/build_sheet.py
 ```
 
-PokeAPI에서 리아코의 5세대 애니메이션 배틀 스프라이트를 다시 받아서 `totodile.codex-pet/{spritesheet.png,pet.json}`을 처음부터 재생성합니다 — 완전히 재현 가능하고, 바이너리 원본 에셋은 저장소에 커밋하지 않습니다.
+`scripts/build_sheet.py`의 `PETS` 리스트에 등록된 각 포켓몬(현재 리아코 #158, 메타몽 #132)마다 PokeAPI에서 5세대 애니메이션 배틀 스프라이트를 다시 받아서 `<slug>.codex-pet/{spritesheet.png,pet.json}`과 `ConnorPet/Sources/ConnorPet/Resources/pets/<slug>/`의 앱 번들 사본을 동시에 처음부터 재생성합니다 — 완전히 재현 가능하고, 바이너리 원본 에셋은 저장소에 커밋하지 않습니다. 새 포켓몬을 펫 선택 메뉴에 추가하려면 `PETS`에 항목을 하나 더 넣고 스크립트를 다시 돌린 뒤, `AppDelegate.swift`의 `availablePetSlugs`에 슬러그를 추가하면 됩니다.
 
 ## 크레딧 / 라이선스
 

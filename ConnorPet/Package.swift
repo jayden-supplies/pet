@@ -8,8 +8,7 @@ let package = Package(
         .executableTarget(
             name: "ConnorPet",
             resources: [
-                .copy("Resources/spritesheet.png"),
-                .copy("Resources/pet.json")
+                .copy("Resources/pets")
             ]
         )
     ]

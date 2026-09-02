@@ -4,7 +4,7 @@ import AppKit
 /// (drag → running-left/right, hover → jumping), mirroring
 /// `usePetPointerInteraction.ts` + `PetOverlay.tsx`'s render precedence.
 final class PetView: NSView {
-    private let spriteSheet: SpriteSheet
+    private var spriteSheet: SpriteSheet
     private var trackingArea: NSTrackingArea?
 
     private var frameIndex = 0
@@ -50,6 +50,16 @@ final class PetView: NSView {
     func setBaseAnimation(_ name: PetAnimationName) {
         guard baseAnimation != name else { return }
         baseAnimation = name
+        applyDisplayAnimation()
+    }
+
+    // MARK: - Public: swapping the active character
+
+    /// Switches the rendered character (e.g. via the menu-bar picker) while
+    /// preserving live interaction state (hover/drag/base status animation).
+    func setSpriteSheet(_ newSheet: SpriteSheet) {
+        spriteSheet = newSheet
+        currentAnimationKey = nil // force applyDisplayAnimation to restart from frame 0
         applyDisplayAnimation()
     }
 

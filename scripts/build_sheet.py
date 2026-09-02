@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-Builds totodile.codex-pet/spritesheet.png + pet.json from PokeAPI's public
-gen5 battle sprites for Totodile / 리아코 (#158). Reproducible: re-running
-this script re-downloads the source frames and regenerates the bundle from
-scratch.
+Builds each configured Pokémon's `<slug>.codex-pet/{spritesheet.png,pet.json}`
+(Orca-importable bundle) plus its copy under
+`ConnorPet/Sources/ConnorPet/Resources/pets/<slug>/` (the ConnorPet app's
+bundled resource, picked from the menu-bar pet switcher) from PokeAPI's public
+gen5 battle sprites. Reproducible: re-running this script re-downloads the
+source frames and regenerates every bundle from scratch, so the two copies of
+each pet's assets can never drift out of sync.
 
 Requires: pillow (`pip install pillow`)
 
@@ -17,17 +20,43 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
-OUT_DIR = os.path.join(REPO_ROOT, "totodile.codex-pet")
 CACHE_DIR = os.path.join(HERE, ".cache")
-
-FRONT_URL = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/158.gif"
-BACK_URL = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/back/158.gif"
+APP_RESOURCES_DIR = os.path.join(REPO_ROOT, "ConnorPet", "Sources", "ConnorPet", "Resources", "pets")
 
 FRAME = 200
 COLS = 4
 ROWS_ORDER = [
     "idle", "running-right", "running-left", "waving",
     "jumping", "failed", "waiting", "running", "review"
+]
+
+# Every pet the ConnorPet menu-bar switcher offers. Add an entry here (plus a
+# re-run of this script) to add a new selectable Pokémon.
+PETS = [
+    {
+        "slug": "totodile",
+        "dex_id": 158,
+        "out_dir_name": "totodile.codex-pet",
+        "id": "totodile-riako",
+        "display_name": "리아코 (Totodile)",
+        "description": (
+            "Custom connor-pet build: Totodile / 리아코 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
+    {
+        "slug": "ditto",
+        "dex_id": 132,
+        "out_dir_name": "ditto.codex-pet",
+        "id": "ditto-metamong",
+        "display_name": "메타몽 (Ditto)",
+        "description": (
+            "Custom connor-pet build: Ditto / 메타몽 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
 ]
 
 
@@ -200,9 +229,12 @@ def draw_zzz(frame, frame_index):
     return Image.alpha_composite(frame, overlay)
 
 
-def main():
-    front_path = fetch(FRONT_URL, os.path.join(CACHE_DIR, "front.gif"))
-    back_path = fetch(BACK_URL, os.path.join(CACHE_DIR, "back.gif"))
+def build_pet(pet):
+    dex_id = pet["dex_id"]
+    front_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{dex_id}.gif"
+    back_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/back/{dex_id}.gif"
+    front_path = fetch(front_url, os.path.join(CACHE_DIR, f"{dex_id}_front.gif"))
+    back_path = fetch(back_url, os.path.join(CACHE_DIR, f"{dex_id}_back.gif"))
 
     front_raw = load_frames(front_path)
     back_raw = load_frames(back_path)
@@ -310,25 +342,47 @@ def main():
             "frameDurationsMs": data["durations"]
         }
 
-    os.makedirs(OUT_DIR, exist_ok=True)
-    sheet.save(os.path.join(OUT_DIR, "spritesheet.png"), optimize=True)
-
     manifest = {
-        "id": "totodile-riako",
-        "displayName": "리아코 (Totodile)",
-        "description": "Custom connor-pet build: Totodile / 리아코 reacts to live Orca agent/project status, "
-                        "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
-                        "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites.",
+        "id": pet["id"],
+        "displayName": pet["display_name"],
+        "description": pet["description"],
         "spritesheetPath": "spritesheet.png",
         "frame": {"width": FRAME, "height": FRAME},
         "fps": 8,
         "defaultAnimation": "idle",
         "animations": manifest_animations
     }
-    with open(os.path.join(OUT_DIR, "pet.json"), "w") as f:
+
+    # Orca-importable bundle (Settings → Experimental → Pet → Import).
+    out_dir = os.path.join(REPO_ROOT, pet["out_dir_name"])
+    os.makedirs(out_dir, exist_ok=True)
+    sheet.save(os.path.join(out_dir, "spritesheet.png"), optimize=True)
+    with open(os.path.join(out_dir, "pet.json"), "w") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    print(f"wrote {OUT_DIR}/spritesheet.png ({sheet.size[0]}x{sheet.size[1]}) and pet.json")
+    # ConnorPet app's bundled copy, picked from the menu-bar pet switcher —
+    # written from the same in-memory sheet/manifest so it can never drift
+    # from the Orca-importable bundle above.
+    app_dir = os.path.join(APP_RESOURCES_DIR, pet["slug"])
+    os.makedirs(app_dir, exist_ok=True)
+    sheet.save(os.path.join(app_dir, "spritesheet.png"), optimize=True)
+    with open(os.path.join(app_dir, "pet.json"), "w") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+    print(f"wrote {out_dir}/ and {app_dir}/ ({sheet.size[0]}x{sheet.size[1]})")
+
+
+def main():
+    for pet in PETS:
+        build_pet(pet)
+
+    # Old flat Resources/{spritesheet.png,pet.json} layout is superseded by
+    # per-pet Resources/pets/<slug>/ subfolders now that there's more than one.
+    old_flat_dir = os.path.join(REPO_ROOT, "ConnorPet", "Sources", "ConnorPet", "Resources")
+    for name in ("spritesheet.png", "pet.json"):
+        stale = os.path.join(old_flat_dir, name)
+        if os.path.exists(stale):
+            os.remove(stale)
 
 
 if __name__ == "__main__":
