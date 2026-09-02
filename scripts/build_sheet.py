@@ -68,6 +68,8 @@ EFFECTS_DIR = os.path.join(HERE, "effects")
 # 불길이 나오는 입 위치(200px 프레임 기준). 파이리 기준으로 눈으로 맞춘 값이고,
 # 다른 펫에 속성기를 추가하면 펫마다 따로 잡아야 한다.
 MOUTH_X, MOUTH_Y = 62, 78
+# 불길 끝과 프레임 왼쪽 변 사이에 남길 여백. 0 이면 변에 닿아 잘린 것처럼 보인다.
+JET_MARGIN = 6
 
 
 def spec(name):
@@ -273,6 +275,20 @@ def load_effect(name):
 
 def blank_canvas():
     return Image.new("RGBA", (FRAME, FRAME), (0, 0, 0, 0))
+
+
+def applied_offset(sprite, dx, dy=0, scale=1.0):
+    """paste_centered 가 실제로 적용하게 될 dx/dy 를 미리 알려 준다.
+
+    paste_centered 는 스프라이트가 프레임을 벗어나지 않도록 오프셋을 잘라낸다.
+    불뿜기처럼 스프라이트 위에 이펙트를 얹는 연출은 입 좌표를 이 오프셋으로
+    계산하므로, 잘린 값을 모르면 불길이 입에서 떨어져 나온다.
+    """
+    w, h = sprite.size
+    if scale != 1.0:
+        w, h = max(1, round(w * scale)), max(1, round(h * scale))
+    cx, cy = (FRAME - w) // 2, (FRAME - h) // 2
+    return max(0, min(FRAME - w, cx + dx)) - cx, max(0, min(FRAME - h, cy + dy)) - cy
 
 
 def paste_centered(sprite, dx=0, dy=0, scale=1.0):
@@ -525,21 +541,32 @@ def build_pet(pet):
         breath_frames = []
         src = sample(front_base, n)
         for i, sprite in enumerate(src):
-            # 0~2 준비(뒤로), 3~7 분사(앞으로), 8~9 회복
+            # 0~2 준비, 3~7 분사, 8~9 회복.
+            #
+            # 분사 중에는 펫이 **오른쪽으로** 밀린다. 반동이라 그림상 자연스럽기도
+            # 하지만, 실질적인 이유는 불길이 나갈 자리를 왼쪽에 만들어 주는 것이다.
+            # 예전에는 반대로 왼쪽으로 기울여서 여유를 더 깎아 먹었고, 제트 129px 가
+            # 56px 공간에 들어가느라 56% 가 프레임 밖에서 잘려 단절돼 보였다.
             if i < 3:
-                dx, grow = 5 - i * 2, 0.0
+                dx, grow = -2 + i * 4, 0.0
             elif i < 8:
                 k = (i - 3) / 4                      # 0 → 1
-                dx, grow = -6, 0.35 + 0.65 * k
+                dx, grow = 18 + round(4 * k), 0.45 + 0.55 * k
             else:
-                dx, grow = -2, 0.0
+                dx, grow = 6 - (i - 8) * 6, 0.0
             frame = paste_centered(sprite, dx=dx, dy=-2)
+            # 스프라이트가 프레임 끝에 닿으면 dx 가 잘린다. 잘린 뒤의 값으로
+            # 입 위치를 잡아야 불길이 입에 붙어 있는다.
+            dx, _ = applied_offset(sprite, dx, dy=-2)
             if jet is not None and grow > 0:
-                jw = max(1, round(jet.width * grow))
-                jh = max(1, round(jet.height * grow))
+                # 불길은 원본 크기가 아니라 **입 왼쪽에 남은 공간**에 맞춘다.
+                # 그래야 프레임 안에서 끝나고, 잘린 것처럼 보이지 않는다.
+                room = MOUTH_X + dx - JET_MARGIN
+                jw = max(1, round(room * grow))
+                jh = max(1, round(jet.height * (jw / jet.width)))
                 scaled = jet.resize((jw, jh), Image.NEAREST)
                 # 제트의 오른쪽 끝(좁은 쪽)을 입에 붙인다.
-                frame.alpha_composite(scaled, (MOUTH_X - jw + dx, MOUTH_Y - jh // 2))
+                frame.alpha_composite(scaled, (MOUTH_X + dx - jw, MOUTH_Y - jh // 2))
             breath_frames.append(frame)
         rows["fire-breath"] = {"frames": breath_frames, "durations": durs}
 
