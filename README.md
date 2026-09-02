@@ -29,7 +29,14 @@ Claude Code CLI는 실행 중인 프로세스마다 `~/.claude/sessions/<pid>.js
 
 세션 파일 폴링만으로는 `busy`/`idle` 두 가지만 구분되고, "권한 승인창이 떠서 멈춰있음"(얼음)이나 "작업이 끝나 리뷰를 기다림"(헤롱헤롱)에 대응하는 신호가 없습니다. 이 신호는 Claude Code의 [hooks](https://docs.claude.com/en/docs/claude-code/hooks)로만 얻을 수 있어서, 원한다면 아래처럼 직접 설정해야 합니다 — `ConnorPet`이 자동으로 설정해주지 않습니다(전역 `~/.claude/settings.json`을 건드리는 일이라 명시적으로 동의한 경우에만 건드리는 게 맞다고 판단했습니다).
 
-`~/.claude/settings.json`에 다음을 추가하세요 (이미 다른 `hooks`가 있다면 이벤트별로 병합):
+**설치 (권장)** — 스크립트가 필요한 6개 훅을 `~/.claude/settings.json`에 병합해줍니다. 이미 있는 다른 훅(matcher가 걸린 것 포함)은 절대 건드리지 않고, 이 저장소가 어디 클론됐든 경로도 알아서 맞춰줍니다. 실행 전 기존 파일을 타임스탬프 붙여 백업하고, 몇 번을 다시 실행해도 중복 추가되지 않습니다:
+
+```sh
+python3 scripts/install_claude_hooks.py             # 설치
+python3 scripts/install_claude_hooks.py --uninstall  # connor-pet이 추가한 항목만 제거
+```
+
+**수동 설치**를 원하면 `~/.claude/settings.json`에 아래 내용을 직접 추가해도 됩니다 (이미 다른 `hooks`가 있다면 이벤트별로 병합, 경로는 이 저장소를 클론한 실제 위치로):
 
 ```json
 {
@@ -139,10 +146,14 @@ scripts/build_sheet.py   재현 가능한 생성 스크립트 — `PETS` 리스�
 scripts/simulate_agent.py  실제 에이전트 없이 테스트하기 위한 도구. last-status.json에
                              가짜 패널 상태를 주입/삭제합니다 (아래 "테스트하기" 참고, Orca 소스 전용)
 
-scripts/claude_hook_status.py  Claude Code 훅 핸들러 (선택 설치). ~/.claude/settings.json에
-                                 등록해두면 훅이 발생할 때마다 이 스크립트가 실행되어
-                                 ~/.claude/connor-pet-status.json을 갱신합니다 (위 "Claude Code
-                                 훅으로 얼음/헤롱헤롱까지 보기" 참고)
+scripts/install_claude_hooks.py  위 훅 설정을 ~/.claude/settings.json에 자동으로 병합/제거하는
+                                   설치 스크립트 (`--uninstall`로 원상복구). 기존 훅은 건드리지
+                                   않고, 재실행해도 중복 추가되지 않음
+
+scripts/claude_hook_status.py  Claude Code 훅 핸들러 (선택 설치, 위 스크립트가 참조). ~/.claude/
+                                 settings.json에 등록해두면 훅이 발생할 때마다 이 스크립트가
+                                 실행되어 ~/.claude/connor-pet-status.json을 갱신합니다 (위
+                                 "Claude Code 훅으로 얼음/헤롱헤롱까지 보기" 참고)
 
 preview/index.html        브라우저 전용 미리보기: 실제 spritesheet.png + pet.json을 그대로
                             불러와서 Orca의 실제 CSS 스텝핑 알고리즘(buildSpriteAnimationCss)으로
