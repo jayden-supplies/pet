@@ -218,9 +218,9 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
         let now = Date().timeIntervalSince1970 * 1000
         let suppressed = suppressAcknowledgedDone(entries, acknowledgedAtMs: acknowledgedAtMs)
         var result = agentStateAnimation(entries: suppressed, retainedCount: 0, now: now)
-        result.totalTokens = tokenReader.total(for: entries)
+        result.contextTokens = tokenReader.maxContextTokens(for: entries)
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
-            FileHandle.standardError.write("[connor-pet] claude-code: \(entries.count) session(s) -> \(result.animation), \(Int(result.totalTokens)) tokens\n".data(using: .utf8)!)
+            FileHandle.standardError.write("[connor-pet] claude-code: \(entries.count) session(s) -> \(result.animation), \(Int(result.contextTokens)) ctx tokens\n".data(using: .utf8)!)
             for line in result.trace { FileHandle.standardError.write("  \(line.line)\n".data(using: .utf8)!) }
         }
         DispatchQueue.main.async { [weak self] in

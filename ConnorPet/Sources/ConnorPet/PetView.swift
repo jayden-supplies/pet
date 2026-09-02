@@ -22,8 +22,12 @@ final class PetView: NSView {
     private var progressPercent: Double = 0
     private var progressStage: Int = 0
     // When true the bar is always drawn; when false it only appears on hover
-    // (menu-bar toggle, see AppDelegate). Default on.
-    private var barAlwaysVisible = true
+    // (menu-bar toggle, see AppDelegate). Default off.
+    private var barAlwaysVisible = false
+    // Whether the XP bar mechanism is active at all. Off while evolution is
+    // disabled — then no bar is ever shown and the sprite uses the full window
+    // (no reserved strip), so the pet sits flush at the bottom.
+    private var barEnabled = true
 
     // Live inputs, combined exactly like `selectPetAnimationName`.
     private var baseAnimation: PetAnimationName = .idle
@@ -87,6 +91,14 @@ final class PetView: NSView {
         needsDisplay = true
     }
 
+    /// Whether the XP bar mechanism is active (evolution enabled). When off, no
+    /// bar is drawn and the sprite fills the whole window.
+    func setBarEnabled(_ enabled: Bool) {
+        guard enabled != barEnabled else { return }
+        barEnabled = enabled
+        needsDisplay = true
+    }
+
     // MARK: - Public: swapping the active character
 
     /// Switches the rendered character (e.g. via the menu-bar picker) while
@@ -146,10 +158,12 @@ final class PetView: NSView {
         scheduleNextFrame()
     }
 
-    /// The square the sprite renders into — the whole view minus the XP-bar
-    /// strip reserved along the bottom.
+    /// The square the sprite renders into. With the bar enabled it's the view
+    /// minus the reserved bottom strip; with the bar disabled the sprite uses
+    /// the whole view so the pet stays flush at the bottom.
     private var spriteRect: NSRect {
-        NSRect(x: 0, y: Self.barAreaHeight, width: bounds.width, height: bounds.height - Self.barAreaHeight)
+        guard barEnabled else { return bounds }
+        return NSRect(x: 0, y: Self.barAreaHeight, width: bounds.width, height: bounds.height - Self.barAreaHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -163,6 +177,8 @@ final class PetView: NSView {
         // one wasn't. .copy overwrites the whole rect (color + alpha) with the new
         // frame's pixels instead of blending, so there's nothing left to bleed through.
         image.draw(in: spriteRect, from: .zero, operation: .copy, fraction: 1.0)
+
+        guard barEnabled else { return } // evolution off → no bar, sprite owns the whole view
 
         // The bar strip is never touched by the sprite draw above, so clear it
         // to transparent each frame (.copy) before optionally drawing the bar —

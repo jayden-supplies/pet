@@ -59,11 +59,12 @@ struct AgentStateAnimationTrace {
 struct AgentStateAnimationResult {
     let animation: PetAnimationName
     let trace: [AgentStateAnimationTrace]
-    /// Aggregate token usage across all live panes/sessions, filled in by each
+    /// Representative context-window usage (tokens) across all live
+    /// panes/sessions — the max over their transcripts, filled in by each
     /// watcher's `publish` (0 when no transcript is readable). Drives the XP
     /// bar + evolution — see XPModel. Defaulted so `agentStateAnimation`'s
     /// return sites don't need to thread it through.
-    var totalTokens: Double = 0
+    var contextTokens: Double = 0
 }
 
 /// Ported verbatim (in spirit) from `pet-agent-state.ts`'s `agentStateAnimation()`.

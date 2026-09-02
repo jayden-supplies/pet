@@ -99,10 +99,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let win = PetWindow(contentRect: contentRect)
         let view = PetView(spriteSheet: sheet)
         view.frame = NSRect(x: 0, y: 0, width: size, height: viewHeight)
-        barAlwaysVisible = Self.savedBarAlwaysVisible(fallback: true)
+        barAlwaysVisible = Self.savedBarAlwaysVisible(fallback: false)
         view.setBarAlwaysVisible(barAlwaysVisible)
         evolutionThresholds = Self.savedEvolutionThresholds(fallback: XPModel.stageThresholds)
         evolutionEnabled = Self.savedEvolutionEnabled(fallback: true)
+        view.setBarEnabled(evolutionEnabled) // evolution off → no bar at all
         view.onRequestWindowMove = { [weak win] newOrigin in
             win?.setFrameOrigin(newOrigin)
             Self.saveOrigin(newOrigin)
@@ -198,6 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleEvolutionEnabled() {
         evolutionEnabled.toggle()
         Self.saveEvolutionEnabled(evolutionEnabled)
+        petView?.setBarEnabled(evolutionEnabled) // hide/show the bar entirely
         applyStage() // evolve to the earned stage, or revert to base, immediately
         rebuildMenu()
     }
@@ -277,17 +279,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applyUpdate(_ result: AgentStateAnimationResult) {
         petView?.setBaseAnimation(result.animation)
-        currentPercent = XPModel.percent(tokens: result.totalTokens)
+        currentPercent = XPModel.percent(contextTokens: result.contextTokens)
         applyStage()
     }
 
     /// Applies the current XP to the bar and evolution. When evolution is
-    /// disabled the pet is pinned to its base form (stage 0) no matter how much
-    /// XP it has. Called both on each poll and immediately after a menu change
-    /// (thresholds / enable toggle) so edits take effect without waiting.
+    /// disabled the pet is pinned to its base form (stage 0) and the bar is
+    /// hidden entirely. The bar fill is progress toward the *next* threshold
+    /// (see XPModel.barFill), not absolute percent. Called both on each poll and
+    /// immediately after a menu change (thresholds / enable toggle).
     private func applyStage() {
         let stage = evolutionEnabled ? XPModel.stage(percent: currentPercent, thresholds: evolutionThresholds) : 0
-        petView?.setProgress(percent: currentPercent, stage: stage)
+        let fill = evolutionEnabled ? XPModel.barFill(percent: currentPercent, thresholds: evolutionThresholds) : 0
+        petView?.setProgress(percent: fill, stage: stage)
         if stage != currentStage {
             currentStage = stage
             refreshDisplayedPet()
@@ -418,7 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(always, forKey: barAlwaysVisibleDefaultsKey)
     }
 
-    // Defaults to `fallback` (true — bar always shown) when nothing saved yet.
+    // Defaults to `fallback` (false — bar only on hover) when nothing saved yet.
     private static func savedBarAlwaysVisible(fallback: Bool) -> Bool {
         guard UserDefaults.standard.object(forKey: barAlwaysVisibleDefaultsKey) != nil else { return fallback }
         return UserDefaults.standard.bool(forKey: barAlwaysVisibleDefaultsKey)

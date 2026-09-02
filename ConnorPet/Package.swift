@@ -10,6 +10,10 @@ let package = Package(
             resources: [
                 .copy("Resources/pets")
             ]
+        ),
+        .testTarget(
+            name: "ConnorPetTests",
+            dependencies: ["ConnorPet"]
         )
     ]
 )
