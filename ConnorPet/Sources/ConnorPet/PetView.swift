@@ -22,6 +22,9 @@ final class PetView: NSView {
     private var didDragThisGesture = false
 
     var onRequestWindowMove: ((_ screenOrigin: CGPoint) -> Void)?
+    /// Fires once each time the pointer enters the pet — the "you noticed it"
+    /// gesture AppDelegate uses to dismiss a lingering review/헤롱헤롱 state.
+    var onHoverEnter: (() -> Void)?
 
     init(spriteSheet: SpriteSheet) {
         self.spriteSheet = spriteSheet
@@ -129,6 +132,7 @@ final class PetView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         hovering = true
+        onHoverEnter?()
         applyDisplayAnimation()
     }
 

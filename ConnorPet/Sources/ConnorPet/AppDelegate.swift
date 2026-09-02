@@ -62,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             win?.setFrameOrigin(newOrigin)
             Self.saveOrigin(newOrigin)
         }
+        view.onHoverEnter = { [weak self] in
+            self?.watcher?.acknowledgeDone()
+        }
         win.contentView = view
         win.makeKeyAndOrderFront(nil)
 

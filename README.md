@@ -23,7 +23,49 @@
 
 Claude Code CLI는 실행 중인 프로세스마다 `~/.claude/sessions/<pid>.json`에 자기 상태를 계속 기록합니다 (`claude agents`/`claude agents --json`이 읽는 것과 같은 파일). `ConnorPet`은 이 디렉토리를 **250ms마다** 폴링해서, 살아있는 프로세스(`kill(pid, 0)`으로 확인)의 `status`/`tempo` 필드를 Orca와 같은 `working`/`blocked`/`idle` 상태로 매핑한 뒤 동일한 `agentStateAnimation`에 넣습니다. 열려있는 **모든** Claude Code 세션(프로젝트 무관)을 집계하는 것도 Orca 소스와 동일합니다.
 
-> **알아둘 점**: 실제로 확인해보니 이 세션 파일은 `status: "busy" | "idle"`만 안정적으로 채워지고, 더 세밀한 `tempo: "active" | "idle" | "blocked"`(권한 프롬프트 대기 등)는 이 버전(2.1.197)에서는 관찰되지 않았습니다. 코드는 `tempo`가 `"blocked"`로 채워지는 경우를 이미 처리하지만, 지금 당장은 `busy`→**running**, 그 외→**idle**만 사실상 동작합니다. Claude Code에는 Orca의 "done(리뷰 대기)"에 대응하는 신호가 없어서, 이 소스를 쓸 때는 **review(헤롱헤롱) 애니메이션은 트리거되지 않습니다**.
+> **알아둘 점**: 실제로 확인해보니 이 세션 파일은 `status: "busy" | "idle"`만 안정적으로 채워지고, 더 세밀한 `tempo: "active" | "idle" | "blocked"`(권한 프롬프트 대기 등)는 이 버전(2.1.197)에서는 관찰되지 않았습니다. 이것만으로는 얼음(권한 승인 대기)·헤롱헤롱(작업 완료) 상태를 구분할 수 없어서, 아래 훅을 추가로 설치하면 더 정확한 상태를 볼 수 있습니다.
+
+#### Claude Code 훅으로 얼음/헤롱헤롱까지 보기 (선택 사항)
+
+세션 파일 폴링만으로는 `busy`/`idle` 두 가지만 구분되고, "권한 승인창이 떠서 멈춰있음"(얼음)이나 "작업이 끝나 리뷰를 기다림"(헤롱헤롱)에 대응하는 신호가 없습니다. 이 신호는 Claude Code의 [hooks](https://docs.claude.com/en/docs/claude-code/hooks)로만 얻을 수 있어서, 원한다면 아래처럼 직접 설정해야 합니다 — `ConnorPet`이 자동으로 설정해주지 않습니다(전역 `~/.claude/settings.json`을 건드리는 일이라 명시적으로 동의한 경우에만 건드리는 게 맞다고 판단했습니다).
+
+`~/.claude/settings.json`에 다음을 추가하세요 (이미 다른 `hooks`가 있다면 이벤트별로 병합):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py working" }] }
+    ],
+    "PreToolUse": [
+      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py working" }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py blocked" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py done" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py remove" }] }
+    ]
+  }
+}
+```
+
+경로는 이 저장소를 클론한 실제 위치로 바꿔야 합니다. 각 훅이 하는 일:
+
+| 훅 | 발생 시점 | 기록하는 상태 |
+|---|---|---|
+| `UserPromptSubmit` | 사용자가 새 프롬프트를 보냄 | `working` |
+| `PreToolUse` | 도구 실행 직전 (승인 후 재개 포함) | `working` |
+| `Notification` | 권한 승인 필요 또는 60초 이상 입력 대기 | `blocked` → **얼음** |
+| `Stop` | 에이전트가 턴을 마치고 제어권을 사용자에게 돌려줌 | `done` → **헤롱헤롱** |
+| `SessionEnd` | 세션 종료 | 해당 항목 제거 |
+
+`scripts/claude_hook_status.py`는 각 훅이 stdin으로 받는 JSON(`session_id`/`cwd` 포함)을 읽어서 `~/.claude/connor-pet-status.json`을 Orca의 `last-status.json`과 같은 형태로 갱신합니다(동시에 여러 세션이 훅을 발생시켜도 안전하도록 `fcntl.flock`으로 잠그고 원자적으로 씀). `ClaudeCodeStatusWatcher`는 이 파일이 있으면 세션 파일의 busy/idle보다 우선해서 씁니다 — 훅을 설정 안 해도 앱은 그대로 동작하고(예전처럼 busy/idle만), 설정하면 자동으로 더 정확해집니다.
+
+**헤롱헤롱이 사라지는 시점**: `done`은 그 세션이 다시 `working`으로 바뀌기 전까지, 또는 **펫에 마우스를 올리기 전까지** 유지됩니다(둘 중 먼저 오는 쪽). 펫을 호버하면 `AgentStatusWatching.acknowledgeDone()`이 호출되어 그 시점 이전의 `done`은 전부 "확인함" 처리되고, 그 이후에 새로 `done`이 찍히면 다시 나타납니다 — Stop 이벤트 하나가 무한히 헤롱헤롱을 유지하지 않도록 하는 장치입니다.
 
 ### Orca 소스 (`OrcaStatusWatcher.swift`)
 
@@ -91,7 +133,12 @@ scripts/build_sheet.py   재현 가능한 생성 스크립트 — `PETS` 리스�
                           ConnorPet 앱의 번들 리소스를 함께 재생성합니다 (`python3 scripts/build_sheet.py`)
 
 scripts/simulate_agent.py  실제 에이전트 없이 테스트하기 위한 도구. last-status.json에
-                             가짜 패널 상태를 주입/삭제합니다 (아래 "테스트하기" 참고)
+                             가짜 패널 상태를 주입/삭제합니다 (아래 "테스트하기" 참고, Orca 소스 전용)
+
+scripts/claude_hook_status.py  Claude Code 훅 핸들러 (선택 설치). ~/.claude/settings.json에
+                                 등록해두면 훅이 발생할 때마다 이 스크립트가 실행되어
+                                 ~/.claude/connor-pet-status.json을 갱신합니다 (위 "Claude Code
+                                 훅으로 얼음/헤롱헤롱까지 보기" 참고)
 
 preview/index.html        브라우저 전용 미리보기: 실제 spritesheet.png + pet.json을 그대로
                             불러와서 Orca의 실제 CSS 스텝핑 알고리즘(buildSpriteAnimationCss)으로
@@ -101,8 +148,10 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
   Package.swift              (Swift Package, `swift run`만 있으면 됨 — Xcode 불필요)
   Sources/ConnorPet/
     OrcaStatusWatcher.swift    last-status.json 폴링(1s) + 전체 상태 집계 (Orca 소스)
-    ClaudeCodeStatusWatcher.swift  ~/.claude/sessions/*.json 폴링(250ms) + 전체 상태 집계 (Claude Code 소스, 기본값)
+    ClaudeCodeStatusWatcher.swift  ~/.claude/sessions/*.json + (있다면) 훅이 쓴 connor-pet-status.json을
+                                    250ms마다 폴링해 병합 (Claude Code 소스, 기본값)
     PetAnimationState.swift    포팅한 우선순위 로직 + 드래그 방향 판정 + AgentStatusWatching 프로토콜
+                                (acknowledgeDone()으로 헤롱헤롱 호버-해제 처리)
     SpriteSheet.swift           spritesheet.png를 애니메이션별 프레임 배열로 자름
     PetView.swift                프레임 렌더링, 호버/드래그 처리
     PetWindow.swift               테두리 없는 투명, 항상 위에 뜨는 NSWindow
@@ -134,7 +183,13 @@ python3 scripts/simulate_agent.py clear-all                # "idle"로 복귀
 
 `connor-pet-test:` 접두어가 붙은 키로만 기록해서, 실제 Orca 패널(UUID 형태)과 절대 충돌하지 않습니다. `clear-all`도 이 접두어가 붙은 항목만 지웁니다.
 
-**Claude Code 소스**는 시뮬레이터가 없습니다 — 다른 터미널에서 `claude`를 실행해서 실제 세션을 하나 띄우고 프롬프트를 보내보면(`~/.claude/sessions/<pid>.json`의 `status`가 `busy`로 바뀌는 동안) 펫이 바로 반응하는 걸 볼 수 있습니다.
+**Claude Code 소스**는 시뮬레이터가 없습니다 — 다른 터미널에서 `claude`를 실행해서 실제 세션을 하나 띄우고 프롬프트를 보내보면(`~/.claude/sessions/<pid>.json`의 `status`가 `busy`로 바뀌는 동안) 펫이 바로 반응하는 걸 볼 수 있습니다. 위 훅까지 설정했다면 stdin으로 가짜 페이로드를 직접 넣어서 얼음/헤롱헤롱도 트리거해볼 수 있습니다:
+
+```sh
+echo '{"session_id":"<아무-id>","cwd":"/tmp"}' | python3 scripts/claude_hook_status.py blocked  # "waiting"으로
+echo '{"session_id":"<아무-id>","cwd":"/tmp"}' | python3 scripts/claude_hook_status.py done      # "review"로
+rm ~/.claude/connor-pet-status.json                                                              # 원상복구
+```
 
 **한 가지 알아둘 점**: Orca가 실제로 돌고 있고 실제 에이전트 활동이 생기면, Orca 자신이 다음 상태를 저장할 때 파일 전체를 자기 메모리 상태로 덮어써서 주입해둔 테스트 항목이 사라질 수 있습니다(실제로 테스트하다가 이렇게 됐습니다). 그럴 땐 그냥 `set` 명령을 다시 실행하면 됩니다 — 실제 데이터를 건드리는 게 아니라서 안전합니다.
 

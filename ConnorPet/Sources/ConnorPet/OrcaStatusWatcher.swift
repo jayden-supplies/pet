@@ -2,7 +2,9 @@ import Foundation
 
 /// Parses the subset of Orca's persisted `last-status.json` entry shape that
 /// we need, using loose JSONSerialization dictionaries rather than a strict
-/// Codable struct.
+/// Codable struct. Also reused by `ClaudeCodeStatusWatcher` for
+/// `~/.claude/connor-pet-status.json`, which our own hooks write in this same
+/// shape (see `scripts/claude_hook_status.py`).
 ///
 /// Why: real on-disk entries are NOT uniform. An entry that came from a
 /// "SubagentStop" hook event (observed live) nests `state`/`prompt`/`agentType`
@@ -13,7 +15,7 @@ import Foundation
 /// no per-entry recovery), silently zeroing out every pane's status. Parsing
 /// loosely and checking both locations per-entry is what actually survives
 /// Orca's real output.
-private func parseEntries(from data: Data) -> [AgentStatusEntry] {
+func parseAgentStatusEntries(from data: Data) -> [AgentStatusEntry] {
     guard let rawObject = try? JSONSerialization.jsonObject(with: data) else { return [] }
     guard let root = rawObject as? [String: Any] else { return [] }
     guard let entriesObj = root["entries"] as? [String: Any] else { return [] }
@@ -59,6 +61,9 @@ final class OrcaStatusWatcher: AgentStatusWatching {
     /// for callers that want to simulate/inject it; defaults to 0.
     var retainedCount: Int = 0
 
+    // ms epoch of the last acknowledgeDone() call — see suppressAcknowledgedDone.
+    private var acknowledgedAtMs: Double = 0
+
     var onUpdate: ((AgentStateAnimationResult) -> Void)?
 
     init(pollInterval: TimeInterval = 1.0) {
@@ -81,6 +86,10 @@ final class OrcaStatusWatcher: AgentStatusWatching {
         timer = nil
     }
 
+    func acknowledgeDone() {
+        acknowledgedAtMs = Date().timeIntervalSince1970 * 1000
+    }
+
     private func poll() {
         let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
         let modifiedAt = attrs?[.modificationDate] as? Date
@@ -98,12 +107,13 @@ final class OrcaStatusWatcher: AgentStatusWatching {
             publish(entries: [])
             return
         }
-        publish(entries: parseEntries(from: data))
+        publish(entries: parseAgentStatusEntries(from: data))
     }
 
     private func publish(entries: [AgentStatusEntry]) {
         let now = Date().timeIntervalSince1970 * 1000
-        let result = agentStateAnimation(entries: entries, retainedCount: retainedCount, now: now)
+        let suppressed = suppressAcknowledgedDone(entries, acknowledgedAtMs: acknowledgedAtMs)
+        let result = agentStateAnimation(entries: suppressed, retainedCount: retainedCount, now: now)
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
             FileHandle.standardError.write("[connor-pet] \(entries.count) entr(y/ies) -> \(result.animation)\n".data(using: .utf8)!)
             for line in result.trace { FileHandle.standardError.write("  \(line.line)\n".data(using: .utf8)!) }

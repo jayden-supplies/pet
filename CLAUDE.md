@@ -6,14 +6,15 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
 
 - `ConnorPet/` — 실제 결과물인 독립 macOS 앱 (Swift Package, Xcode 불필요)
   - `Sources/ConnorPet/OrcaStatusWatcher.swift` — `last-status.json` 폴링(1s) + 상태 집계 (Orca 소스)
-  - `Sources/ConnorPet/ClaudeCodeStatusWatcher.swift` — `~/.claude/sessions/*.json` 폴링(250ms) + 상태 집계 (Claude Code 소스, 기본값)
-  - `Sources/ConnorPet/PetAnimationState.swift` — 우선순위 로직 포팅 + `AgentStatusWatching` 프로토콜
+  - `Sources/ConnorPet/ClaudeCodeStatusWatcher.swift` — `~/.claude/sessions/*.json`(항상) + `~/.claude/connor-pet-status.json`(훅 설치 시)을 250ms마다 폴링해 병합 (Claude Code 소스, 기본값)
+  - `Sources/ConnorPet/PetAnimationState.swift` — 우선순위 로직 포팅 + `AgentStatusWatching` 프로토콜 (`acknowledgeDone()`으로 헤롱헤롱 호버-해제)
   - `Sources/ConnorPet/SpriteSheet.swift`, `PetView.swift`, `PetWindow.swift` — 렌더링
   - `Sources/ConnorPet/AppDelegate.swift` — 앱 연결, 메뉴바 아이콘/펫 선택/소스 선택 메뉴
   - `Sources/ConnorPet/Resources/pets/<slug>/` — 펫별 `spritesheet.png` + `pet.json` 번들 사본
 - `<slug>.codex-pet/` (totodile/ditto/charmander/squirtle/geodude/eevee/chikorita/torchic) — Orca에 직접 임포트 가능한 번들
 - `scripts/build_sheet.py` — PokeAPI에서 스프라이트를 다시 받아 각 펫의 시트를 재생성 (`PETS` 리스트가 소스 오브 트루스)
 - `scripts/simulate_agent.py` — 실제 에이전트 없이 `last-status.json`에 가짜 상태 주입 (Orca 소스 전용)
+- `scripts/claude_hook_status.py` — Claude Code 훅 핸들러 (선택 설치, README "Claude Code 훅으로 얼음/헤롱헤롱까지 보기" 참고). `~/.claude/settings.json`은 전역 설정이라 **사용자 명시적 동의 없이 이 저장소가 대신 수정하지 않는다** — README에 설정 방법만 안내
 - `preview/index.html` — 브라우저 전용 미리보기 (Orca 설치 불필요)
 
 ## 빌드 / 실행 / 테스트
