@@ -129,6 +129,18 @@ PETS = [
             "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
         ),
     },
+    {
+        "slug": "tepig",
+        "dex_id": 498,
+        "out_dir_name": "tepig.codex-pet",
+        "id": "tepig-ttukkuri",
+        "display_name": "뚜꾸리 (Tepig)",
+        "description": (
+            "Custom connor-pet build: Tepig / 뚜꾸리 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
 ]
 
 
