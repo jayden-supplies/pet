@@ -40,6 +40,9 @@ Claude Code CLI는 실행 중인 프로세스마다 `~/.claude/sessions/<pid>.js
     "PreToolUse": [
       { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py working" }] }
     ],
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py blocked" }] }
+    ],
     "Notification": [
       { "hooks": [{ "type": "command", "command": "python3 /Users/connor/personal/connor-pet/scripts/claude_hook_status.py blocked" }] }
     ],
@@ -59,7 +62,8 @@ Claude Code CLI는 실행 중인 프로세스마다 `~/.claude/sessions/<pid>.js
 |---|---|---|
 | `UserPromptSubmit` | 사용자가 새 프롬프트를 보냄 | `working` |
 | `PreToolUse` | 도구 실행 직전 (승인 후 재개 포함) | `working` |
-| `Notification` | 권한 승인 필요 또는 60초 이상 입력 대기 | `blocked` → **얼음** |
+| `PermissionRequest` | 권한 승인창이 뜸 (Orca 자체 훅도 이 이벤트를 씀 — `Notification`보다 승인창에 특화된 신호) | `blocked` → **얼음** |
+| `Notification` | 권한 승인 필요 또는 60초 이상 입력 대기 (`PermissionRequest`와 겹칠 수 있지만 놓치지 않도록 같이 걸어둠) | `blocked` → **얼음** |
 | `Stop` | 에이전트가 턴을 마치고 제어권을 사용자에게 돌려줌 | `done` → **헤롱헤롱** |
 | `SessionEnd` | 세션 종료 | 해당 항목 제거 |
 
