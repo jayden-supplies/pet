@@ -82,6 +82,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.bubble?.show(text: text, above: petFrame, duration: duration)
         }
         view.onSilence = { [weak self] in self?.bubble?.hide() }
+        view.onFireBreath = { [weak self] in
+            Self.saveFireBreathAt(Date())
+            guard let self, let petFrame = self.window?.frame else { return }
+            self.bubble?.show(text: "좋아, 여기까지! 이제부터 할 일만 볼게.",
+                              above: petFrame, duration: 3.5)
+        }
         view.onHoverEnter = { [weak self] in
             self?.watcher?.acknowledgeDone()
         }
@@ -124,6 +130,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// one was started to do. Reads Claude Code's own transcripts, so it covers
     /// both the CLI and the desktop app without either being running.
     private func briefingText() -> String? {
+        // 불뿜기는 "여기까지 정리, 이제부터 할 일만 본다"는 표시다. 최근 3시간
+        // 안에 뿜었다면 고정 3시간 창 대신 **그 시점 이후**만 보여 준다.
+        if let firedAt = Self.savedFireBreathAt() {
+            let sinceFire = Date().timeIntervalSince(firedAt)
+            if sinceFire >= 0, sinceFire <= briefPrimaryHours * 3600 {
+                let briefs = SessionBriefReader.recent(
+                    withinHours: sinceFire / 3600,
+                    limit: briefPrimaryLimit,
+                    perBriefChars: briefCharsPerSession
+                )
+                if briefs.isEmpty {
+                    return "불 뿜은 뒤로 새로 시작한 작업은 아직 없어. 깨끗해."
+                }
+                return render(briefs, prefix: "불 뿜은 뒤로 이것들만 남았어.")
+            }
+        }
+
         var briefs = SessionBriefReader.recent(
             withinHours: briefPrimaryHours,
             limit: briefPrimaryLimit,
@@ -142,13 +165,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return "최근 \(Int(briefFallbackHours))시간 안에 작업한 게 없어. 푹 쉬었구나?"
         }
 
-        var lines: [String] = []
         // 2순위로 내려왔다는 건 방금까지 한 일이 아니라는 뜻이라, 그렇다고 말해 준다.
         // 안 그러면 이틀 전 작업을 지금 하던 일로 읽는다.
-        if isFallback {
-            lines.append("최근 \(Int(briefPrimaryHours))시간은 조용했어. 그 전엔 이런 걸 했어.")
-        }
-        // 접두 문장도 말풍선에 들어가므로 예산에 포함해서 센다.
+        return render(briefs, prefix: isFallback
+            ? "최근 \(Int(briefPrimaryHours))시간은 조용했어. 그 전엔 이런 걸 했어."
+            : nil)
+    }
+
+    /// 브리프들을 말풍선 한 덩어리로 만든다. 접두 문장도 글자 예산에 포함한다.
+    private func render(_ briefs: [SessionBrief], prefix: String?) -> String {
+        var lines: [String] = []
+        if let prefix { lines.append(prefix) }
         var used = lines.reduce(0) { $0 + $1.count }
         for brief in briefs {
             let line = "· [\(brief.project)] \(brief.text)"
@@ -316,6 +343,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return fallback
         }
         return saved
+    }
+
+    // MARK: - 불뿜기 스냅샷
+
+    // 마지막으로 불을 뿜은 시각. 앱을 껐다 켜도 유지돼야 체크포인트로 쓸모가 있다.
+    private static let fireBreathDefaultsKey = "lastFireBreathAt"
+
+    private static func saveFireBreathAt(_ date: Date) {
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: fireBreathDefaultsKey)
+    }
+
+    private static func savedFireBreathAt() -> Date? {
+        let t = UserDefaults.standard.double(forKey: fireBreathDefaultsKey)
+        return t > 0 ? Date(timeIntervalSince1970: t) : nil
     }
 
     // MARK: - Window position persistence

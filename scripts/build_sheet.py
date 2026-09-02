@@ -53,8 +53,21 @@ FRAME_SPEC = {
     "waiting":       (8, 300),    # 2.3x — 얼음. 포즈 고정, 반짝임만 흐른다
     "running":       (12, 180),   # 2.5x — 작업 중
     "review":        (12, 220),   # 2.1x — 헤롱헤롱
+    "fire-breath":   (10, 110),   # 5.0x — 불뿜기. 짧고 세게
 }
 COLS = max(n for n, _ in FRAME_SPEC.values())
+
+# 모든 펫이 갖는 행(ROWS_ORDER) 외에, 특정 펫에만 붙는 행.
+# 속성기는 그 포켓몬의 타입에 묶이므로 전 펫 공통일 수 없다.
+EXTRA_ROWS = {
+    "charmander": ["fire-breath"],
+}
+
+EFFECTS_DIR = os.path.join(HERE, "effects")
+
+# 불길이 나오는 입 위치(200px 프레임 기준). 파이리 기준으로 눈으로 맞춘 값이고,
+# 다른 펫에 속성기를 추가하면 펫마다 따로 잡아야 한다.
+MOUTH_X, MOUTH_Y = 62, 78
 
 
 def spec(name):
@@ -243,6 +256,19 @@ def sample(frames, n, start=0.0, span=1.0):
     """
     last = len(frames) - 1
     return [frames[max(0, min(last, int(round((start + span * (i / n)) * last))))] for i in range(n)]
+
+
+def load_effect(name):
+    """scripts/effects/ 의 이펙트 스프라이트를 읽는다.
+
+    캐릭터 스프라이트와 달리 이건 PokeAPI 에서 받을 수 없어서 저장소에 커밋해
+    둔다(생성형 이미지라 재실행으로 똑같이 다시 만들 수 없다). 파일이 없으면
+    해당 연출만 건너뛴다 — 없다고 빌드가 실패하면 안 된다.
+    """
+    path = os.path.join(EFFECTS_DIR, name)
+    if not os.path.exists(path):
+        return None
+    return Image.open(path).convert("RGBA")
 
 
 def blank_canvas():
@@ -491,6 +517,32 @@ def build_pet(pet):
     # done is the completion state, reskinned as Infatuation: a warm pink
     # tint (replacing the old gold) plus floating hearts instead of just a
     # color shift.
+    # 불뿜기 — 파이리 전용. 숨을 들이켰다가(뒤로 젖힘) 앞으로 내뿜는다.
+    # 펫이 왼쪽을 보고 있으므로 불길도 왼쪽으로 나간다.
+    if "fire-breath" in EXTRA_ROWS.get(pet["slug"], []):
+        jet = load_effect("fire_jet.png")
+        n, durs = spec("fire-breath")
+        breath_frames = []
+        src = sample(front_base, n)
+        for i, sprite in enumerate(src):
+            # 0~2 준비(뒤로), 3~7 분사(앞으로), 8~9 회복
+            if i < 3:
+                dx, grow = 5 - i * 2, 0.0
+            elif i < 8:
+                k = (i - 3) / 4                      # 0 → 1
+                dx, grow = -6, 0.35 + 0.65 * k
+            else:
+                dx, grow = -2, 0.0
+            frame = paste_centered(sprite, dx=dx, dy=-2)
+            if jet is not None and grow > 0:
+                jw = max(1, round(jet.width * grow))
+                jh = max(1, round(jet.height * grow))
+                scaled = jet.resize((jw, jh), Image.NEAREST)
+                # 제트의 오른쪽 끝(좁은 쪽)을 입에 붙인다.
+                frame.alpha_composite(scaled, (MOUTH_X - jw + dx, MOUTH_Y - jh // 2))
+            breath_frames.append(frame)
+        rows["fire-breath"] = {"frames": breath_frames, "durations": durs}
+
     n, durs = spec("review")
     review_frames = []
     for i, s in enumerate(sample(front_base, n)):
@@ -501,12 +553,13 @@ def build_pet(pet):
         review_frames.append(draw_hearts(frame, t))
     rows["review"] = {"frames": review_frames, "durations": durs}
 
+    row_order = ROWS_ORDER + [r for r in EXTRA_ROWS.get(pet["slug"], []) if r in rows]
     sheet_w = FRAME * COLS
-    sheet_h = FRAME * len(ROWS_ORDER)
+    sheet_h = FRAME * len(row_order)
     sheet = Image.new("RGBA", (sheet_w, sheet_h), (0, 0, 0, 0))
 
     manifest_animations = {}
-    for row_idx, name in enumerate(ROWS_ORDER):
+    for row_idx, name in enumerate(row_order):
         data = rows[name]
         for col_idx, frame in enumerate(data["frames"]):
             sheet.alpha_composite(frame, (col_idx * FRAME, row_idx * FRAME))

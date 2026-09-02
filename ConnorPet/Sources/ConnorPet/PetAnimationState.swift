@@ -9,6 +9,8 @@ enum PetAnimationName: String, CaseIterable {
     case jumping
     case waving
     case failed
+    /// 파이리 전용. 매니페스트에 이 행이 없는 펫에서는 메뉴가 비활성된다.
+    case fireBreath = "fire-breath"
     case runningRight = "running-right"
     case runningLeft = "running-left"
 
@@ -27,6 +29,7 @@ enum PetAnimationName: String, CaseIterable {
         case .jumping:      return "점프"
         case .waving:       return "말하기"
         case .failed:       return "실패"
+        case .fireBreath:   return "불뿜기 — 여기까지 정리, 이후 작업만 브리핑"
         case .runningRight: return "오른쪽보기"
         case .runningLeft:  return "왼쪽보기"
         }

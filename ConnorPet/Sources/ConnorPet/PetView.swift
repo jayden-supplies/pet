@@ -32,6 +32,13 @@ final class PetView: NSView {
     /// "자동" clears it and hands control back to the live status.
     private var pinnedAnimation: PetAnimationName?
 
+    /// 한 바퀴만 돌고 스스로 물러나는 모션(불뿜기). 고정(pin)과 달리 끝나면
+    /// 원래 상태로 돌아간다 — 체크포인트 동작이라 계속 뿜고 있으면 곤란하다.
+    private var oneShotAnimation: PetAnimationName?
+
+    /// 불뿜기가 실제로 재생됐을 때. 호출부가 시각을 기록한다.
+    var onFireBreath: (() -> Void)?
+
     var onRequestWindowMove: ((_ screenOrigin: CGPoint) -> Void)?
     /// Left click (not a drag). The delegate returns the text to say, or nil
     /// to stay quiet.
@@ -92,6 +99,9 @@ final class PetView: NSView {
             case nil: return pinnedAnimation ?? baseAnimation
             }
         }
+        if let oneShot = oneShotAnimation {
+            return oneShot
+        }
         if let pinned = pinnedAnimation {
             return pinned
         }
@@ -144,15 +154,32 @@ final class PetView: NSView {
         menu.addItem(.separator())
 
         for name in PetAnimationName.allCases {
-            let item = NSMenuItem(title: name.koreanLabel, action: #selector(pinMotion(_:)), keyEquivalent: "")
+            // 불뿜기는 고정이 아니라 1회 재생이고, 메뉴가 열린 상태에서 a 로 바로 쏜다.
+            let isOneShot = (name == .fireBreath)
+            let item = NSMenuItem(
+                title: name.koreanLabel,
+                action: isOneShot ? #selector(fireBreath(_:)) : #selector(pinMotion(_:)),
+                keyEquivalent: isOneShot ? "a" : ""
+            )
+            if isOneShot {
+                // 기본값이 ⌘ 라서 비워야 a 단독으로 먹는다.
+                item.keyEquivalentModifierMask = []
+            }
             item.target = self
             item.representedObject = name.rawValue
-            item.state = (pinnedAnimation == name) ? .on : .off
+            item.state = (!isOneShot && pinnedAnimation == name) ? .on : .off
             // A motion with no row in this pet's manifest cannot be played.
             item.isEnabled = spriteSheet.animation(named: name.rawValue) != nil
             menu.addItem(item)
         }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func fireBreath(_ sender: NSMenuItem) {
+        pinnedAnimation = nil
+        if playOnce(.fireBreath) {
+            onFireBreath?()
+        }
     }
 
     @objc private func pinMotion(_ sender: NSMenuItem) {
@@ -193,9 +220,28 @@ final class PetView: NSView {
 
     private func advanceFrame() {
         guard let frames = currentFrames, !frames.images.isEmpty else { return }
-        frameIndex = (frameIndex + 1) % frames.images.count
+        let next = frameIndex + 1
+        // 1회 재생 모션은 마지막 프레임에서 멈추고 원래 상태로 돌아간다.
+        if oneShotAnimation != nil, next >= frames.images.count {
+            oneShotAnimation = nil
+            currentAnimationKey = nil // 다음 모션을 0프레임부터 다시 시작시킨다
+            applyDisplayAnimation()
+            return
+        }
+        frameIndex = next % frames.images.count
         needsDisplay = true
         scheduleNextFrame()
+    }
+
+    /// 모션을 한 바퀴만 재생한다. 이 펫에 그 행이 없으면 아무것도 하지 않는다.
+    @discardableResult
+    func playOnce(_ name: PetAnimationName) -> Bool {
+        guard spriteSheet.animation(named: name.rawValue) != nil else { return false }
+        stopSpeaking()
+        oneShotAnimation = name
+        currentAnimationKey = nil
+        applyDisplayAnimation()
+        return true
     }
 
     override func draw(_ dirtyRect: NSRect) {
