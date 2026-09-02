@@ -105,6 +105,30 @@ PETS = [
             "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
         ),
     },
+    {
+        "slug": "chikorita",
+        "dex_id": 152,
+        "out_dir_name": "chikorita.codex-pet",
+        "id": "chikorita-chikorita",
+        "display_name": "치코리타 (Chikorita)",
+        "description": (
+            "Custom connor-pet build: Chikorita / 치코리타 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
+    {
+        "slug": "torchic",
+        "dex_id": 255,
+        "out_dir_name": "torchic.codex-pet",
+        "id": "torchic-achamo",
+        "display_name": "아차모 (Torchic)",
+        "description": (
+            "Custom connor-pet build: Torchic / 아차모 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
 ]
 
 

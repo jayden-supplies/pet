@@ -115,7 +115,14 @@ final class PetView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let frames = currentFrames, frames.images.indices.contains(frameIndex) else { return }
         let image = frames.images[frameIndex]
-        image.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1.0)
+        // Why: .sourceOver blends onto whatever pixels are already in the layer's
+        // backing store. Since every frame has transparent margins, switching to a
+        // differently-shaped sprite (e.g. via the menu-bar pet picker, or even
+        // Totodile's own asymmetric run-cycle frames) left a faint ghost of the
+        // previous frame visible wherever the new frame is transparent but the old
+        // one wasn't. .copy overwrites the whole rect (color + alpha) with the new
+        // frame's pixels instead of blending, so there's nothing left to bleed through.
+        image.draw(in: bounds, from: .zero, operation: .copy, fraction: 1.0)
     }
 
     // MARK: - Pointer interaction
