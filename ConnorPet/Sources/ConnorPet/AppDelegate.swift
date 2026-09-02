@@ -42,6 +42,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "ditto": [],
     ]
 
+    // Evolution % thresholds [stage1, stage2], configurable from the menu bar.
+    // Kept strictly increasing (stage1 < stage2). Defaults match XPModel's PoC
+    // values (10% / 30%).
+    private var evolutionThresholds: [Double] = XPModel.stageThresholds
+    // Preset percentages offered in the menu for each stage.
+    private static let thresholdPresets: [Double] = [0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.70]
+    // Whether the pet evolves at all (menu toggle). When off it stays the base
+    // form regardless of XP. Default on.
+    private var evolutionEnabled = true
+
     // Whether the XP bar is always shown vs. only on hover (menu toggle).
     private var barAlwaysVisible = true
     // Live XP state, so re-selecting a pet re-derives the right evolved form.
@@ -91,6 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.frame = NSRect(x: 0, y: 0, width: size, height: viewHeight)
         barAlwaysVisible = Self.savedBarAlwaysVisible(fallback: true)
         view.setBarAlwaysVisible(barAlwaysVisible)
+        evolutionThresholds = Self.savedEvolutionThresholds(fallback: XPModel.stageThresholds)
+        evolutionEnabled = Self.savedEvolutionEnabled(fallback: true)
         view.onRequestWindowMove = { [weak win] newOrigin in
             win?.setFrameOrigin(newOrigin)
             Self.saveOrigin(newOrigin)
@@ -121,6 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        // We manage enablement ourselves (to gray out the threshold submenu when
+        // evolution is off); every other item defaults to enabled.
+        menu.autoenablesItems = false
         for slug in Self.availablePetSlugs {
             guard let title = petDisplayNames[slug] else { continue } // resources missing for this slug — skip it
             let menuItem = NSMenuItem(title: title, action: #selector(selectPet(_:)), keyEquivalent: "")
@@ -145,6 +160,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         barToggle.target = self
         barToggle.state = barAlwaysVisible ? .on : .off
         menu.addItem(barToggle)
+
+        // Master on/off for evolution. When off the pet stays its base form.
+        let evoToggle = NSMenuItem(title: "진화 사용", action: #selector(toggleEvolutionEnabled), keyEquivalent: "")
+        evoToggle.target = self
+        evoToggle.state = evolutionEnabled ? .on : .off
+        menu.addItem(evoToggle)
+
+        // Evolution thresholds: a submenu with one sub-submenu per stage, each
+        // listing preset percentages (checkmark on the current choice). Grayed
+        // out while evolution is disabled (the values still persist).
+        let evoTitle = "진화 % 설정 (\(Self.pct(evolutionThresholds[0])) / \(Self.pct(evolutionThresholds[1])))"
+        let evoItem = NSMenuItem(title: evoTitle, action: nil, keyEquivalent: "")
+        evoItem.isEnabled = evolutionEnabled
+        let evoMenu = NSMenu()
+        evoMenu.addItem(makeThresholdSubmenu(title: "1단계 진화", stageIndex: 0))
+        evoMenu.addItem(makeThresholdSubmenu(title: "2단계 진화", stageIndex: 1))
+        evoItem.submenu = evoMenu
+        menu.addItem(evoItem)
+
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -158,6 +192,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.saveBarAlwaysVisible(barAlwaysVisible)
         rebuildMenu()
     }
+
+    // MARK: - Menu-bar evolution controls
+
+    @objc private func toggleEvolutionEnabled() {
+        evolutionEnabled.toggle()
+        Self.saveEvolutionEnabled(evolutionEnabled)
+        applyStage() // evolve to the earned stage, or revert to base, immediately
+        rebuildMenu()
+    }
+
+    /// Builds the per-stage sub-submenu of preset percentages. `tag` carries the
+    /// stage index and `representedObject` the chosen fraction.
+    private func makeThresholdSubmenu(title: String, stageIndex: Int) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        let current = evolutionThresholds[stageIndex]
+        for preset in Self.thresholdPresets {
+            let sub = NSMenuItem(title: Self.pct(preset), action: #selector(selectThreshold(_:)), keyEquivalent: "")
+            sub.target = self
+            sub.tag = stageIndex
+            sub.representedObject = NSNumber(value: preset)
+            sub.state = (abs(preset - current) < 0.0001) ? .on : .off
+            submenu.addItem(sub)
+        }
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func selectThreshold(_ sender: NSMenuItem) {
+        guard let value = (sender.representedObject as? NSNumber)?.doubleValue else { return }
+        setThreshold(stageIndex: sender.tag, value: value)
+    }
+
+    /// Sets one stage's threshold, keeping the pair strictly increasing
+    /// (stage 1 < stage 2) by nudging the other stage when they'd cross.
+    private func setThreshold(stageIndex: Int, value: Double) {
+        var t = evolutionThresholds
+        t[stageIndex] = value
+        if stageIndex == 0, t[0] >= t[1] {
+            t[1] = Self.thresholdPresets.first(where: { $0 > t[0] }) ?? t[0]
+        } else if stageIndex == 1, t[1] <= t[0] {
+            t[0] = Self.thresholdPresets.last(where: { $0 < t[1] }) ?? t[1]
+        }
+        evolutionThresholds = t
+        Self.saveEvolutionThresholds(t)
+        applyStage() // re-evaluate against the new thresholds right away
+        rebuildMenu()
+    }
+
+    private static func pct(_ fraction: Double) -> String { "\(Int((fraction * 100).rounded()))%" }
 
     @objc private func selectPet(_ sender: NSMenuItem) {
         guard let slug = sender.representedObject as? String, slug != selectedPetSlug else { return }
@@ -193,11 +277,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applyUpdate(_ result: AgentStateAnimationResult) {
         petView?.setBaseAnimation(result.animation)
-
         currentPercent = XPModel.percent(tokens: result.totalTokens)
-        let stage = XPModel.stage(percent: currentPercent)
-        petView?.setProgress(percent: currentPercent, stage: stage)
+        applyStage()
+    }
 
+    /// Applies the current XP to the bar and evolution. When evolution is
+    /// disabled the pet is pinned to its base form (stage 0) no matter how much
+    /// XP it has. Called both on each poll and immediately after a menu change
+    /// (thresholds / enable toggle) so edits take effect without waiting.
+    private func applyStage() {
+        let stage = evolutionEnabled ? XPModel.stage(percent: currentPercent, thresholds: evolutionThresholds) : 0
+        petView?.setProgress(percent: currentPercent, stage: stage)
         if stage != currentStage {
             currentStage = stage
             refreshDisplayedPet()
@@ -332,6 +422,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func savedBarAlwaysVisible(fallback: Bool) -> Bool {
         guard UserDefaults.standard.object(forKey: barAlwaysVisibleDefaultsKey) != nil else { return fallback }
         return UserDefaults.standard.bool(forKey: barAlwaysVisibleDefaultsKey)
+    }
+
+    // MARK: - Evolution settings persistence
+
+    private static let evolutionThresholdsDefaultsKey = "evolutionThresholds"
+    private static let evolutionEnabledDefaultsKey = "evolutionEnabled"
+
+    private static func saveEvolutionThresholds(_ thresholds: [Double]) {
+        UserDefaults.standard.set(thresholds, forKey: evolutionThresholdsDefaultsKey)
+    }
+
+    // Falls back to `fallback` unless a valid [stage1, stage2] pair was saved
+    // (two fractions in 0...1, strictly increasing).
+    private static func savedEvolutionThresholds(fallback: [Double]) -> [Double] {
+        guard let saved = UserDefaults.standard.array(forKey: evolutionThresholdsDefaultsKey) as? [Double],
+              saved.count == 2,
+              saved.allSatisfy({ $0 >= 0 && $0 <= 1 }),
+              saved[0] <= saved[1] else {
+            return fallback
+        }
+        return saved
+    }
+
+    private static func saveEvolutionEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: evolutionEnabledDefaultsKey)
+    }
+
+    // Defaults to `fallback` (true — evolution on) when nothing saved yet.
+    private static func savedEvolutionEnabled(fallback: Bool) -> Bool {
+        guard UserDefaults.standard.object(forKey: evolutionEnabledDefaultsKey) != nil else { return fallback }
+        return UserDefaults.standard.bool(forKey: evolutionEnabledDefaultsKey)
     }
 
     // MARK: - Window position persistence

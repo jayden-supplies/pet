@@ -90,8 +90,10 @@ enum XPModel {
         return min(1, max(0, tokens / maxTokens))
     }
 
-    /// 0 = base form, 1 = first evolution, 2 = second evolution.
-    static func stage(percent: Double) -> Int {
-        stageThresholds.reduce(0) { $0 + (percent >= $1 ? 1 : 0) }
+    /// 0 = base form, 1 = first evolution, 2 = second evolution. Thresholds are
+    /// configurable from the menu bar (see AppDelegate.evolutionThresholds);
+    /// `stageThresholds` is only the default when the user hasn't changed them.
+    static func stage(percent: Double, thresholds: [Double] = stageThresholds) -> Int {
+        thresholds.reduce(0) { $0 + (percent >= $1 ? 1 : 0) }
     }
 }
