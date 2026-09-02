@@ -24,6 +24,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // near Orca's PET_SIZE_MIN=60 floor instead.
     private let petSize: CGFloat = 90
 
+    // 펫마다 pet.json 의 프레임 크기가 다를 수 있다 — 파이리는 불뿜기 불길이
+    // 나갈 자리가 필요해서 320px 를 쓴다(다른 펫은 200px). 창을 petSize 로 고정하면
+    // 프레임이 큰 펫만 캐릭터가 작게 그려지므로, 창 크기를 프레임 비율만큼 키워
+    // **화면에 찍히는 캐릭터 크기를 펫마다 같게** 맞춘다.
+    private static let referenceFrameWidth: CGFloat = 200
+
+    private func windowSize(for sheet: SpriteSheet) -> CGFloat {
+        (petSize * CGFloat(sheet.manifest.frame.width) / Self.referenceFrameWidth).rounded()
+    }
+
     // Every bundled pet lives at Resources/pets/<slug>/{spritesheet.png,pet.json}
     // (see scripts/build_sheet.py's PETS list, which is the source of truth for
     // this set). Display names shown in the menu come from each pet's own
@@ -57,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             fatalError("connor-pet: bundled pet '\(selectedPetSlug)' not found")
         }
 
-        let size = petSize
+        let size = windowSize(for: sheet)
         // Why: NSScreen.main resolves from the key window, which doesn't exist
         // yet during applicationDidFinishLaunching — it can silently return an
         // unexpected screen (observed: a stale/secondary one with a negative
@@ -227,6 +237,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let slug = sender.representedObject as? String, slug != selectedPetSlug else { return }
         guard let sheet = try? Self.loadSpriteSheet(slug: slug) else { return }
         selectedPetSlug = slug
+
+        // 프레임 크기가 다른 펫으로 바꾸면 창도 같이 커지거나 작아져야 한다.
+        // 중심을 유지해서 바꾸면 펫이 제자리에 있는 것처럼 보인다.
+        if let win = window {
+            let newSize = windowSize(for: sheet)
+            if abs(newSize - win.frame.width) > 0.5 {
+                let center = CGPoint(x: win.frame.midX, y: win.frame.midY)
+                let origin = CGPoint(x: center.x - newSize / 2, y: center.y - newSize / 2)
+                win.setFrame(NSRect(origin: origin, size: CGSize(width: newSize, height: newSize)), display: true)
+                petView?.frame = NSRect(x: 0, y: 0, width: newSize, height: newSize)
+                Self.saveOrigin(origin)
+            }
+        }
+
         petView?.setSpriteSheet(sheet)
         Self.savePetSlug(slug)
         rebuildMenu()

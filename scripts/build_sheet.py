@@ -24,7 +24,15 @@ REPO_ROOT = os.path.dirname(HERE)
 CACHE_DIR = os.path.join(HERE, ".cache")
 APP_RESOURCES_DIR = os.path.join(REPO_ROOT, "ConnorPet", "Sources", "ConnorPet", "Resources", "pets")
 
-FRAME = 200
+# 프레임 한 칸의 크기. 기본은 200 이지만 펫마다 다를 수 있다 — pet.json 이
+# frame 크기를 들고 있고 앱은 그 값을 읽는다.
+#
+# 파이리만 320 인 이유: 불뿜기 불길이 나갈 자리가 필요하다. 200 프레임에는
+# 스프라이트 164px 가 들어 있어 입 왼쪽에 80px 밖에 안 남고, 그 이상 그리면
+# 프레임 밖에서 잘려 단절돼 보인다.
+FRAME_DEFAULT = 200
+FRAME_BY_PET = {"charmander": 320}
+FRAME = FRAME_DEFAULT
 ROWS_ORDER = [
     "idle", "running-right", "running-left", "waving",
     "jumping", "failed", "waiting", "running", "review"
@@ -65,11 +73,12 @@ EXTRA_ROWS = {
 
 EFFECTS_DIR = os.path.join(HERE, "effects")
 
-# 불길이 나오는 입 위치(200px 프레임 기준). 파이리 기준으로 눈으로 맞춘 값이고,
-# 다른 펫에 속성기를 추가하면 펫마다 따로 잡아야 한다.
-MOUTH_X, MOUTH_Y = 62, 78
+# 불길이 나오는 입 위치. **프레임이 아니라 스프라이트 왼쪽 위 기준**의 오프셋이다.
+# 프레임 크기가 펫마다 다르므로 프레임 절대좌표로 두면 프레임을 바꿀 때마다 어긋난다.
+# 파이리 기준으로 눈으로 맞춘 값이고, 다른 펫에 속성기를 붙이면 따로 잡아야 한다.
+MOUTH_IN_SPRITE = (44, 62)
 # 불길 끝과 프레임 왼쪽 변 사이에 남길 여백. 0 이면 변에 닿아 잘린 것처럼 보인다.
-JET_MARGIN = 6
+JET_MARGIN = 8
 
 
 def spec(name):
@@ -434,6 +443,8 @@ def draw_zzz(frame, t):
 
 
 def build_pet(pet):
+    global FRAME
+    FRAME = FRAME_BY_PET.get(pet["slug"], FRAME_DEFAULT)
     dex_id = pet["dex_id"]
     front_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{dex_id}.gif"
     front_path = fetch(front_url, os.path.join(CACHE_DIR, f"{dex_id}_front.gif"))
@@ -547,26 +558,30 @@ def build_pet(pet):
             # 하지만, 실질적인 이유는 불길이 나갈 자리를 왼쪽에 만들어 주는 것이다.
             # 예전에는 반대로 왼쪽으로 기울여서 여유를 더 깎아 먹었고, 제트 129px 가
             # 56px 공간에 들어가느라 56% 가 프레임 밖에서 잘려 단절돼 보였다.
+            recoil = max(0, (FRAME - src[0].width) // 2 - 4)   # 프레임 안에서 밀 수 있는 한계
             if i < 3:
-                dx, grow = -2 + i * 4, 0.0
+                dx, grow = round(recoil * (i / 6)), 0.0
             elif i < 8:
                 k = (i - 3) / 4                      # 0 → 1
-                dx, grow = 18 + round(4 * k), 0.45 + 0.55 * k
+                dx, grow = round(recoil * (0.55 + 0.45 * k)), 0.45 + 0.55 * k
             else:
-                dx, grow = 6 - (i - 8) * 6, 0.0
+                dx, grow = round(recoil * (0.3 - 0.3 * (i - 8))), 0.0
             frame = paste_centered(sprite, dx=dx, dy=-2)
             # 스프라이트가 프레임 끝에 닿으면 dx 가 잘린다. 잘린 뒤의 값으로
             # 입 위치를 잡아야 불길이 입에 붙어 있는다.
-            dx, _ = applied_offset(sprite, dx, dy=-2)
+            adx, ady = applied_offset(sprite, dx, dy=-2)
+            sx = (FRAME - sprite.width) // 2 + adx
+            sy = (FRAME - sprite.height) // 2 + ady
+            mouth_x, mouth_y = sx + MOUTH_IN_SPRITE[0], sy + MOUTH_IN_SPRITE[1]
             if jet is not None and grow > 0:
                 # 불길은 원본 크기가 아니라 **입 왼쪽에 남은 공간**에 맞춘다.
                 # 그래야 프레임 안에서 끝나고, 잘린 것처럼 보이지 않는다.
-                room = MOUTH_X + dx - JET_MARGIN
+                room = mouth_x - JET_MARGIN
                 jw = max(1, round(room * grow))
                 jh = max(1, round(jet.height * (jw / jet.width)))
                 scaled = jet.resize((jw, jh), Image.NEAREST)
                 # 제트의 오른쪽 끝(좁은 쪽)을 입에 붙인다.
-                frame.alpha_composite(scaled, (MOUTH_X + dx - jw, MOUTH_Y - jh // 2))
+                frame.alpha_composite(scaled, (mouth_x - jw, mouth_y - jh // 2))
             breath_frames.append(frame)
         rows["fire-breath"] = {"frames": breath_frames, "durations": durs}
 

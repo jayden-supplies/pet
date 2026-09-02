@@ -4,8 +4,8 @@
   "description": "Custom connor-pet build: Charmander / 파이리 reacts to live Orca agent/project status, skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites.",
   "spritesheetPath": "spritesheet.png",
   "frame": {
-    "width": 200,
-    "height": 200
+    "width": 320,
+    "height": 320
   },
   "fps": 6,
   "defaultAnimation": "idle",
