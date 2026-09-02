@@ -5,6 +5,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var petView: PetView?
     private var statusItem: NSStatusItem?
     private var bubble: SpeechBubbleWindow?
+    private var flame: FlameWindow?
+    private var flameAspect: CGFloat = 1.47
 
     // 브리핑 범위는 2단이다.
     //   1순위 — 최근 3시간 안에 쓴 세션. "지금 하던 일"이 이 안에 있다.
@@ -85,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             win?.setFrameOrigin(newOrigin)
             Self.saveOrigin(newOrigin)
             self?.bubble?.hide() // the bubble does not follow a drag; drop it
+            self?.flame?.hide()  // 불길도 창을 따라오지 않는다
         }
         view.onClick = { [weak self] in self?.briefingText() }
         view.onSpeak = { [weak self] text, duration in
@@ -92,6 +95,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.bubble?.show(text: text, above: petFrame, duration: duration)
         }
         view.onSilence = { [weak self] in self?.bubble?.hide() }
+        view.onFlameFrame = { [weak self] mouthInFrame, grow in
+            guard let self else { return }
+            guard grow > 0, let flame = self.flame, let win = self.window,
+                  let sheet = self.petView?.currentSpriteSheet else {
+                self.flame?.hide()
+                return
+            }
+            // 매니페스트 좌표는 프레임(예: 200px) 기준이고 창은 pt 단위다.
+            // 두 좌표계의 비율로 환산한다. AppKit 의 y 는 위로 자라므로 뒤집는다.
+            let scale = win.frame.width / CGFloat(sheet.manifest.frame.width)
+            let mouth = CGPoint(
+                x: win.frame.minX + mouthInFrame.x * scale,
+                y: win.frame.maxY - mouthInFrame.y * scale
+            )
+            let length = win.frame.width * FlameWindow.lengthMultiplier * grow
+            flame.show(mouth: mouth, length: length, aspect: self.flameAspect)
+        }
         view.onFireBreath = { [weak self] in
             Self.saveFireBreathAt(Date())
             guard let self, let petFrame = self.window?.frame else { return }
@@ -107,6 +127,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window = win
         petView = view
         bubble = SpeechBubbleWindow()
+        if let url = Bundle.module.url(forResource: "fire_jet", withExtension: "png", subdirectory: "effects"),
+           let image = NSImage(contentsOf: url), image.size.height > 0 {
+            flameAspect = image.size.width / image.size.height
+            flame = FlameWindow(image: image)
+        }
 
         setUpStatusItem()
 
@@ -117,6 +142,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let text = briefingText() ?? "(브리핑 없음)"
             FileHandle.standardError.write("[connor-pet] 클릭 브리핑 미리보기 (\(text.count)자):\n\(text)\n".data(using: .utf8)!)
             // 클릭 없이도 말풍선 레이아웃을 눈으로 확인할 수 있게 바로 한 번 띄운다.
+            // 불뿜기를 한 번 재생해 불길 창 좌표를 눈으로 확인할 수 있게 한다.
+            if ProcessInfo.processInfo.environment["CONNORPET_DEBUG_BREATH"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.petView?.playOnce(.fireBreath)
+                }
+            }
             if let petFrame = window?.frame {
                 bubble?.show(text: text, above: petFrame, duration: 60)
                 // 화면 캡처 권한 없이도 말풍선 레이아웃을 확인할 수 있게, 뷰를 그대로
@@ -242,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 중심을 유지해서 바꾸면 펫이 제자리에 있는 것처럼 보인다.
         if let win = window {
             let newSize = windowSize(for: sheet)
+            flame?.hide()
             if abs(newSize - win.frame.width) > 0.5 {
                 let center = CGPoint(x: win.frame.midX, y: win.frame.midY)
                 let origin = CGPoint(x: center.x - newSize / 2, y: center.y - newSize / 2)

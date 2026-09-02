@@ -39,6 +39,11 @@ final class PetView: NSView {
     /// 불뿜기가 실제로 재생됐을 때. 호출부가 시각을 기록한다.
     var onFireBreath: (() -> Void)?
 
+    /// 불뿜기 프레임이 바뀔 때마다 호출된다. 매니페스트 좌표(프레임 기준)를
+    /// 그대로 넘기고, 화면 좌표 환산과 그리기는 호출부가 한다.
+    /// grow 가 0 이면 이번 프레임에는 불길이 없다.
+    var onFlameFrame: ((_ mouthInFrame: CGPoint, _ grow: CGFloat) -> Void)?
+
     var onRequestWindowMove: ((_ screenOrigin: CGPoint) -> Void)?
     /// Left click (not a drag). The delegate returns the text to say, or nil
     /// to stay quiet.
@@ -83,6 +88,9 @@ final class PetView: NSView {
 
     /// Switches the rendered character (e.g. via the menu-bar picker) while
     /// preserving live interaction state (hover/drag/base status animation).
+    /// 현재 재생 중인 시트. 호출부가 매니페스트(프레임 크기 등)를 읽는다.
+    var currentSpriteSheet: SpriteSheet { spriteSheet }
+
     func setSpriteSheet(_ newSheet: SpriteSheet) {
         spriteSheet = newSheet
         currentAnimationKey = nil // force applyDisplayAnimation to restart from frame 0
@@ -206,6 +214,7 @@ final class PetView: NSView {
             frameIndex = 0
             scheduleNextFrame()
             needsDisplay = true
+            publishFlameState()
         }
     }
 
@@ -224,12 +233,14 @@ final class PetView: NSView {
         // 1회 재생 모션은 마지막 프레임에서 멈추고 원래 상태로 돌아간다.
         if oneShotAnimation != nil, next >= frames.images.count {
             oneShotAnimation = nil
+            onFlameFrame?(.zero, 0)
             currentAnimationKey = nil // 다음 모션을 0프레임부터 다시 시작시킨다
             applyDisplayAnimation()
             return
         }
         frameIndex = next % frames.images.count
         needsDisplay = true
+        publishFlameState()
         scheduleNextFrame()
     }
 
@@ -242,6 +253,19 @@ final class PetView: NSView {
         currentAnimationKey = nil
         applyDisplayAnimation()
         return true
+    }
+
+    /// 지금 재생 중인 프레임에 맞는 불길 상태를 호출부에 알린다.
+    private func publishFlameState() {
+        guard oneShotAnimation == .fireBreath,
+              let track = spriteSheet.manifest.fireBreath?.mouthByFrame,
+              track.indices.contains(frameIndex)
+        else {
+            onFlameFrame?(.zero, 0)
+            return
+        }
+        let m = track[frameIndex]
+        onFlameFrame?(CGPoint(x: m.x, y: m.y), CGFloat(m.grow))
     }
 
     override func draw(_ dirtyRect: NSRect) {

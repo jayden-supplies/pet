@@ -27,12 +27,22 @@ APP_RESOURCES_DIR = os.path.join(REPO_ROOT, "ConnorPet", "Sources", "ConnorPet",
 # 프레임 한 칸의 크기. 기본은 200 이지만 펫마다 다를 수 있다 — pet.json 이
 # frame 크기를 들고 있고 앱은 그 값을 읽는다.
 #
-# 파이리만 320 인 이유: 불뿜기 불길이 나갈 자리가 필요하다. 200 프레임에는
-# 스프라이트 164px 가 들어 있어 입 왼쪽에 80px 밖에 안 남고, 그 이상 그리면
-# 프레임 밖에서 잘려 단절돼 보인다.
+# 한때 파이리만 320 이었다 — 불뿜기 불길을 시트 안에 그리려니 자리가 모자랐기
+# 때문이다. 지금은 불길을 시트가 아니라 **별도 창**에 그리므로(FlameWindow.swift)
+# 프레임을 넓힐 이유가 없어졌다. 시트에는 펫의 반동 동작만 들어간다.
 FRAME_DEFAULT = 200
-FRAME_BY_PET = {"charmander": 320}
+# 파이리만 400 인 이유는 불길과 무관하다(불길은 별도 창에 그린다). 캐릭터를 다른
+# 펫의 2배 크기로 보여 주기 위해서다. 창만 2배로 키우면 200px 소스를 1.8배로 늘려
+# 그리게 돼 도트가 뭉개지므로, 스프라이트를 정수배로 두 배(4배 → 8배 확대) 다시 굽고
+# 프레임도 같이 넓힌다.
+FRAME_BY_PET = {"charmander": 400}
 FRAME = FRAME_DEFAULT
+SPRITE_TARGET = SPRITE_TARGET_DEFAULT if False else (170, 150)
+
+# 스프라이트를 프레임 안 어느 크기까지 키울지. 기본값은 좌우 이동·점프 오프셋이
+# 들어갈 여백을 남기도록 잡혀 있다.
+SPRITE_TARGET_DEFAULT = (170, 150)
+SPRITE_TARGET_BY_PET = {"charmander": (340, 345)}
 ROWS_ORDER = [
     "idle", "running-right", "running-left", "waving",
     "jumping", "failed", "waiting", "running", "review"
@@ -253,7 +263,9 @@ def union_bbox(frames):
             max(b[2] for b in boxes), max(b[3] for b in boxes))
 
 
-def prepare_frames(frames, max_w=170, max_h=150):
+def prepare_frames(frames, max_w=None, max_h=None):
+    if max_w is None or max_h is None:
+        max_w, max_h = SPRITE_TARGET
     box = union_bbox(frames)
     cropped = [f.crop(box) if box else f for f in frames]
     return [scale_int_to_fit(c, max_w, max_h) for c in cropped]
@@ -443,8 +455,9 @@ def draw_zzz(frame, t):
 
 
 def build_pet(pet):
-    global FRAME
+    global FRAME, SPRITE_TARGET
     FRAME = FRAME_BY_PET.get(pet["slug"], FRAME_DEFAULT)
+    SPRITE_TARGET = SPRITE_TARGET_BY_PET.get(pet["slug"], SPRITE_TARGET_DEFAULT)
     dex_id = pet["dex_id"]
     front_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{dex_id}.gif"
     front_path = fetch(front_url, os.path.join(CACHE_DIR, f"{dex_id}_front.gif"))
@@ -456,6 +469,7 @@ def build_pet(pet):
     front_base = prepare_frames(front_raw)
 
     rows = {}
+    extra_manifest = {}
 
     # idle == "nothing is happening" in agentStateAnimation, reskinned as the
     # Sleep status: darker/desaturated + a drifting "Zzz" instead of a plain
@@ -547,9 +561,11 @@ def build_pet(pet):
     # 불뿜기 — 파이리 전용. 숨을 들이켰다가(뒤로 젖힘) 앞으로 내뿜는다.
     # 펫이 왼쪽을 보고 있으므로 불길도 왼쪽으로 나간다.
     if "fire-breath" in EXTRA_ROWS.get(pet["slug"], []):
-        jet = load_effect("fire_jet.png")
         n, durs = spec("fire-breath")
         breath_frames = []
+        # 프레임마다 입이 어디로 가는지와 불길이 얼마나 커졌는지. 불길 자체는
+        # 시트에 없고 앱이 별도 창에 그리므로, 앱이 이 값을 읽어 위치를 맞춘다.
+        mouth_by_frame = []
         src = sample(front_base, n)
         for i, sprite in enumerate(src):
             # 0~2 준비, 3~7 분사, 8~9 회복.
@@ -567,23 +583,19 @@ def build_pet(pet):
             else:
                 dx, grow = round(recoil * (0.3 - 0.3 * (i - 8))), 0.0
             frame = paste_centered(sprite, dx=dx, dy=-2)
-            # 스프라이트가 프레임 끝에 닿으면 dx 가 잘린다. 잘린 뒤의 값으로
-            # 입 위치를 잡아야 불길이 입에 붙어 있는다.
+            # 스프라이트가 프레임 끝에 닿으면 dx 가 잘린다. 잘린 뒤의 값이라야
+            # 앱이 계산할 입 좌표와 어긋나지 않는다.
             adx, ady = applied_offset(sprite, dx, dy=-2)
             sx = (FRAME - sprite.width) // 2 + adx
             sy = (FRAME - sprite.height) // 2 + ady
-            mouth_x, mouth_y = sx + MOUTH_IN_SPRITE[0], sy + MOUTH_IN_SPRITE[1]
-            if jet is not None and grow > 0:
-                # 불길은 원본 크기가 아니라 **입 왼쪽에 남은 공간**에 맞춘다.
-                # 그래야 프레임 안에서 끝나고, 잘린 것처럼 보이지 않는다.
-                room = mouth_x - JET_MARGIN
-                jw = max(1, round(room * grow))
-                jh = max(1, round(jet.height * (jw / jet.width)))
-                scaled = jet.resize((jw, jh), Image.NEAREST)
-                # 제트의 오른쪽 끝(좁은 쪽)을 입에 붙인다.
-                frame.alpha_composite(scaled, (mouth_x - jw, mouth_y - jh // 2))
+            mouth_by_frame.append({
+                "x": sx + MOUTH_IN_SPRITE[0],
+                "y": sy + MOUTH_IN_SPRITE[1],
+                "grow": round(grow, 3),
+            })
             breath_frames.append(frame)
         rows["fire-breath"] = {"frames": breath_frames, "durations": durs}
+        extra_manifest["fireBreath"] = {"mouthByFrame": mouth_by_frame}
 
     n, durs = spec("review")
     review_frames = []
@@ -619,7 +631,8 @@ def build_pet(pet):
         "frame": {"width": FRAME, "height": FRAME},
         "fps": 6,
         "defaultAnimation": "idle",
-        "animations": manifest_animations
+        "animations": manifest_animations,
+        **extra_manifest,
     }
 
     # Orca-importable bundle (Settings → Experimental → Pet → Import).
