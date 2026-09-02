@@ -21,7 +21,23 @@ final class PetView: NSView {
     private var dragOffset: CGPoint = .zero
     private var didDragThisGesture = false
 
+    /// Set while the pet is delivering a briefing — outranks hover so the
+    /// pointer sitting on the pet (which it always is, right after a click)
+    /// does not replace the waving motion with the hover jump.
+    private var speaking = false
+    private var speakingTimer: Timer?
+
+    /// Motion pinned from the right-click menu. While set it overrides the
+    /// agent state entirely, so any motion can be inspected on demand; picking
+    /// "자동" clears it and hands control back to the live status.
+    private var pinnedAnimation: PetAnimationName?
+
     var onRequestWindowMove: ((_ screenOrigin: CGPoint) -> Void)?
+    /// Left click (not a drag). The delegate returns the text to say, or nil
+    /// to stay quiet.
+    var onClick: (() -> String?)?
+    var onSpeak: ((_ text: String, _ duration: TimeInterval) -> Void)?
+    var onSilence: (() -> Void)?
 
     init(spriteSheet: SpriteSheet) {
         self.spriteSheet = spriteSheet
@@ -70,13 +86,80 @@ final class PetView: NSView {
             switch dragDirection {
             case .right: return .runningRight
             case .left: return .runningLeft
-            case nil: return baseAnimation
+            case nil: return pinnedAnimation ?? baseAnimation
             }
+        }
+        if let pinned = pinnedAnimation {
+            return pinned
+        }
+        if speaking {
+            return .waving
         }
         if hovering {
             return .jumping
         }
         return baseAnimation
+    }
+
+    // MARK: - Speaking
+
+    private func speak(_ text: String) {
+        // Long briefings need to stay up long enough to actually read: a floor
+        // of 4s plus ~55ms per character, capped so it never sticks forever.
+        let duration = min(24.0, max(4.0, 4.0 + Double(text.count) * 0.055))
+        speaking = true
+        applyDisplayAnimation()
+        onSpeak?(text, duration)
+
+        speakingTimer?.invalidate()
+        speakingTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+            self?.speaking = false
+            self?.applyDisplayAnimation()
+        }
+    }
+
+    private func stopSpeaking() {
+        speakingTimer?.invalidate()
+        speakingTimer = nil
+        guard speaking else { return }
+        speaking = false
+        onSilence?()
+        applyDisplayAnimation()
+    }
+
+    // MARK: - Right-click motion menu
+
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "모션", action: nil, keyEquivalent: "").isEnabled = false
+
+        let auto = NSMenuItem(title: "자동 (에이전트 상태 따르기)", action: #selector(pinMotion(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.representedObject = nil as String?
+        auto.state = pinnedAnimation == nil ? .on : .off
+        menu.addItem(auto)
+        menu.addItem(.separator())
+
+        for name in PetAnimationName.allCases {
+            let item = NSMenuItem(title: name.koreanLabel, action: #selector(pinMotion(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = name.rawValue
+            item.state = (pinnedAnimation == name) ? .on : .off
+            // A motion with no row in this pet's manifest cannot be played.
+            item.isEnabled = spriteSheet.animation(named: name.rawValue) != nil
+            menu.addItem(item)
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func pinMotion(_ sender: NSMenuItem) {
+        stopSpeaking()
+        if let raw = sender.representedObject as? String {
+            pinnedAnimation = PetAnimationName(rawValue: raw)
+        } else {
+            pinnedAnimation = nil
+        }
+        applyDisplayAnimation()
     }
 
     private func applyDisplayAnimation() {
@@ -171,8 +254,20 @@ final class PetView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        let wasClick = !didDragThisGesture
         dragging = false
         dragDirection = nil
+
+        if wasClick {
+            // A second click while talking dismisses the bubble instead of
+            // restarting it — otherwise the pet cannot be told to be quiet.
+            if speaking {
+                stopSpeaking()
+            } else if let text = onClick?(), !text.isEmpty {
+                speak(text)
+                return
+            }
+        }
         applyDisplayAnimation()
     }
 }

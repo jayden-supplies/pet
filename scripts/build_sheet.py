@@ -13,6 +13,7 @@ Requires: pillow (`pip install pillow`)
 Usage: python3 scripts/build_sheet.py
 """
 import json
+import math
 import os
 import urllib.request
 
@@ -24,11 +25,55 @@ CACHE_DIR = os.path.join(HERE, ".cache")
 APP_RESOURCES_DIR = os.path.join(REPO_ROOT, "ConnorPet", "Sources", "ConnorPet", "Resources", "pets")
 
 FRAME = 200
-COLS = 4
 ROWS_ORDER = [
     "idle", "running-right", "running-left", "waving",
     "jumping", "failed", "waiting", "running", "review"
 ]
+
+# 행별 프레임 수와 프레임당 지속시간(ms).
+#
+# 예전에는 모든 행이 4프레임이었다. 원본(PokeAPI gen5 배틀 스프라이트)은 55프레임짜리
+# 애니메이션 GIF인데 그중 4장만 쓰고 버렸기 때문에, 재생이 "네 장 슬라이드쇼"처럼 보였다.
+# 아래처럼 더 촘촘히 샘플링하면 원본이 들고 있던 움직임이 그대로 살아나 GIF처럼 이어진다.
+# 루프 총 길이는 예전과 비슷하게 유지하고 프레임만 잘게 쪼갠 것이다.
+#
+# 속도 기준: 원본 gen5 GIF 는 55프레임 x 100ms = 5.5초 루프다. 12프레임으로 샘플링해
+# "원본과 같은 속도"로 재생하려면 프레임당 458ms 가 필요하다. 아래 값은 그 자연 속도를
+# 기준으로 모션마다 몇 배 빠르게 돌릴지를 정한 것이다 — 처음에는 자연 속도의 6~9배로
+# 잡아서 캐릭터가 안절부절못하는 것처럼 보였다.
+#
+#   name: (프레임 수, 프레임당 ms)   # 자연 속도 대비
+FRAME_SPEC = {
+    "idle":          (12, 400),   # 1.1x — 잠듦. 원본 호흡 속도 거의 그대로
+    "running-right": (12, 120),   # 3.8x — 드래그로 끌려다니는 중이라 제일 빠르다
+    "running-left":  (12, 120),   # 3.8x
+    "waving":        (10, 160),   # 3.4x — 말하는 동안
+    "jumping":       (10, 90),    # 6.1x — 점프는 짧고 빨라야 탄력이 산다
+    "failed":        (10, 130),   # 4.2x — 떨림
+    "waiting":       (8, 300),    # 2.3x — 얼음. 포즈 고정, 반짝임만 흐른다
+    "running":       (12, 180),   # 2.5x — 작업 중
+    "review":        (12, 220),   # 2.1x — 헤롱헤롱
+}
+COLS = max(n for n, _ in FRAME_SPEC.values())
+
+
+def spec(name):
+    n, ms = FRAME_SPEC[name]
+    return n, [ms] * n
+
+
+def lerp_key(keys, t):
+    """예전 4프레임용 키프레임 배열을 임의 프레임 수로 보간한다.
+
+    t 는 루프 위상 [0,1). 키는 루프이므로 마지막 키에서 첫 키로 되돌아가며 잇는다.
+    덕분에 오버레이(하트/Zzz/반짝임)의 기존 연출을 그대로 두고 프레임만 늘릴 수 있다.
+    """
+    n = len(keys)
+    x = (t % 1.0) * n
+    i = int(x) % n
+    j = (i + 1) % n
+    f = x - int(x)
+    return keys[i] + (keys[j] - keys[i]) * f
 
 # Every pet the ConnorPet menu-bar switcher offers. Add an entry here (plus a
 # re-run of this script) to add a new selectable Pokémon.
@@ -150,25 +195,54 @@ def load_frames(path):
     return frames
 
 
-def pick(frames, fracs):
-    n = len(frames)
-    return [frames[min(n - 1, int(round(f * (n - 1))))] for f in fracs]
-
-
-def autocrop(img):
-    bbox = img.getbbox()
-    return img.crop(bbox) if bbox else img
-
-
 # Some Pokémon (e.g. Geodude with its fists spread wide) are noticeably wider
 # than tall, so scaling purely by height alone can blow the width past the
 # 200px frame and get clipped in paste_centered. Scale by whichever of
 # width/height is the tighter constraint instead, so every base sprite fits
 # inside (max_w, max_h) regardless of its aspect ratio.
-def scale_to_fit(img, max_w, max_h):
+# 원본은 41x42 같은 아주 작은 도트 그림이다. 여기에 3.57배 같은 소수배 NEAREST 확대를
+# 걸면 한 도트가 3px 이 되기도 하고 4px 이 되기도 해서, 확대된 그림의 픽셀 격자가
+# 들쭉날쭉해진다(도트 그림에서 제일 눈에 띄는 품질 저하다). 들어갈 수 있는 가장 큰
+# "정수" 배율로만 키우면 모든 도트가 같은 크기의 정사각형으로 유지돼 선명해진다.
+# 배율은 "내림"이 아니라 "반올림"이다. 내림으로 하면 딱 맞는 배율이 2.79 인 꼬마돌이
+# 2배까지 떨어져 예전보다 28% 작아진다. 반올림하면 3배(183px)로 예전(170px)보다 오히려
+# 커진다. 대신 반올림으로 커진 만큼 프레임 안에서 움직일 여백이 줄어드는데, 그건
+# paste_centered 가 오프셋을 잘라내서 처리한다(프레임 밖으로 나가는 일은 없다).
+def scale_int_to_fit(img, max_w, max_h):
     w, h = img.size
-    scale = min(max_w / w, max_h / h)
-    return img.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.NEAREST)
+    factor = max(1, round(min(max_w / w, max_h / h)))
+    # 반올림 결과가 프레임 자체를 넘으면 한 단계 내린다.
+    while factor > 1 and (w * factor > FRAME - 8 or h * factor > FRAME - 8):
+        factor -= 1
+    return img.resize((w * factor, h * factor), Image.NEAREST)
+
+
+# 프레임마다 따로 autocrop 하면 원본 GIF 안에 들어 있는 상하 바운스·몸통 흔들림이
+# 전부 화면 중앙으로 재정렬되면서 사라진다. 전 프레임의 합집합 bbox 로 똑같이 잘라야
+# 프레임 간 상대적인 움직임이 보존된다 — 이게 "GIF처럼 이어져 보이는" 실제 이유다.
+def union_bbox(frames):
+    boxes = [f.getbbox() for f in frames]
+    boxes = [b for b in boxes if b]
+    if not boxes:
+        return None
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes),
+            max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def prepare_frames(frames, max_w=170, max_h=150):
+    box = union_bbox(frames)
+    cropped = [f.crop(box) if box else f for f in frames]
+    return [scale_int_to_fit(c, max_w, max_h) for c in cropped]
+
+
+def sample(frames, n, start=0.0, span=1.0):
+    """루프 재생용으로 n장을 고르게 뽑는다.
+
+    i/n 을 쓰는 이유: i/(n-1) 로 뽑으면 마지막 프레임이 첫 프레임과 같아져
+    루프가 한 박자 멈춘 것처럼 보인다.
+    """
+    last = len(frames) - 1
+    return [frames[max(0, min(last, int(round((start + span * (i / n)) * last))))] for i in range(n)]
 
 
 def blank_canvas():
@@ -176,14 +250,21 @@ def blank_canvas():
 
 
 def paste_centered(sprite, dx=0, dy=0, scale=1.0):
+    """스프라이트를 프레임 중앙에 놓고 dx/dy 만큼 민다.
+
+    dx/dy 는 프레임 안에 완전히 들어가도록 잘린다. 예전에는 자르지 않아서 점프
+    최고점(dy=-34)에서 머리 위쪽이 실제로 잘려 나가고 있었다. 배율을 키운 펫일수록
+    여백이 적으므로 잘리는 폭은 펫마다 다르다 — 잘리느니 덜 움직이는 쪽이 낫다.
+    """
     canvas = blank_canvas()
     s = sprite
     if scale != 1.0:
         w, h = s.size
         s = s.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.NEAREST)
     w, h = s.size
-    x = (FRAME - w) // 2 + dx
-    y = (FRAME - h) // 2 + dy
+    cx, cy = (FRAME - w) // 2, (FRAME - h) // 2
+    x = max(0, min(FRAME - w, cx + dx))
+    y = max(0, min(FRAME - h, cy + dy))
     canvas.alpha_composite(s, (x, y))
     return canvas
 
@@ -279,20 +360,24 @@ def draw_heart(draw, cx, cy, size, alpha):
     draw.polygon([(cx - r, cy - 0.4 * r), (cx + r, cy - 0.4 * r), (cx, cy + r * 1.1)], fill=(255, 130, 185, alpha))
 
 
-def draw_hearts(frame, frame_index):
+# 오버레이들은 원래 4프레임 고정 인덱스를 받았다. 이제 행마다 프레임 수가 다르므로
+# 루프 위상 t(0~1)를 받아 기존 키프레임을 보간한다 — 연출은 그대로, 움직임만 촘촘해진다.
+def draw_hearts(frame, t):
     """Floating hearts for the Infatuation skin, timed to rise + fade across
-    the row's 4-frame loop like the CSS heartFloat keyframes."""
+    the row's loop like the CSS heartFloat keyframes."""
     overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     alphas = [0, 190, 230, 90]
     dy = [10, 0, -12, -24]
-    draw_heart(draw, frame.size[0] * 0.68, frame.size[1] * 0.30 + dy[frame_index], 20, alphas[frame_index])
-    alt = (frame_index + 2) % 4
-    draw_heart(draw, frame.size[0] * 0.32, frame.size[1] * 0.22 + dy[alt], 14, alphas[alt])
+    draw_heart(draw, frame.size[0] * 0.68, frame.size[1] * 0.30 + lerp_key(dy, t),
+               20, int(lerp_key(alphas, t)))
+    alt = t + 0.5
+    draw_heart(draw, frame.size[0] * 0.32, frame.size[1] * 0.22 + lerp_key(dy, alt),
+               14, int(lerp_key(alphas, alt)))
     return Image.alpha_composite(frame, overlay)
 
 
-def draw_zzz(frame, frame_index):
+def draw_zzz(frame, t):
     """Drifting "Zzz" for the Sleep skin, timed like the CSS zzzFloat keyframes."""
     overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
@@ -300,9 +385,9 @@ def draw_zzz(frame, frame_index):
     dx = [0, 4, 12, 20]
     dy = [8, -2, -14, -26]
     font = _load_font(22)
-    x = frame.size[0] * 0.62 + dx[frame_index]
-    y = frame.size[1] * 0.10 + dy[frame_index]
-    draw.text((x, y), "Zzz", font=font, fill=(210, 230, 255, alphas[frame_index]))
+    x = frame.size[0] * 0.62 + lerp_key(dx, t)
+    y = frame.size[1] * 0.10 + lerp_key(dy, t)
+    draw.text((x, y), "Zzz", font=font, fill=(210, 230, 255, int(lerp_key(alphas, t))))
     return Image.alpha_composite(frame, overlay)
 
 
@@ -316,93 +401,98 @@ def build_pet(pet):
     front_raw = load_frames(front_path)
     back_raw = load_frames(back_path)
 
-    front_base = [scale_to_fit(autocrop(f), 170, 150)
-                  for f in pick(front_raw, [0.0, 0.14, 0.28, 0.42, 0.5, 0.64, 0.78, 0.92])]
-    back_base = [scale_to_fit(autocrop(f), 170, 150)
-                 for f in pick(back_raw, [0.0, 0.25, 0.5, 0.75])]
+    # 원본은 55프레임짜리 애니메이션 GIF다. 전 프레임 공통 bbox 로 잘라서
+    # 프레임 간 상대 움직임(호흡·바운스)을 보존하고, 정수배로만 확대한다.
+    front_base = prepare_frames(front_raw)
+    back_base = prepare_frames(back_raw)
 
     rows = {}
 
     # idle == "nothing is happening" in agentStateAnimation, reskinned as the
     # Sleep status: darker/desaturated + a drifting "Zzz" instead of a plain
     # resting pose.
-    idle_src = pick(front_base, [0.0, 0.3, 0.55, 0.85])
+    n, durs = spec("idle")
     idle_frames = []
-    for i, s in enumerate(idle_src):
+    for i, s in enumerate(sample(front_base, n)):
+        t = i / n
         sleepy = desaturate(s, 0.4, 0.62)
-        frame = paste_centered(sleepy, dy=[0, -3, -5, -2][i])
-        idle_frames.append(draw_zzz(frame, i))
-    rows["idle"] = {
-        "frames": idle_frames,
-        "durations": [900, 500, 500, 900]
-    }
+        frame = paste_centered(sleepy, dy=round(-3 + 3 * math.cos(2 * math.pi * t)))
+        idle_frames.append(draw_zzz(frame, t))
+    rows["idle"] = {"frames": idle_frames, "durations": durs}
 
-    run_src = pick(front_base, [0.1, 0.4, 0.6, 0.9])
+    # 좌우 이동은 원본 프레임이 이미 다리 움직임을 갖고 있으므로 dx 만 얹는다.
+    # scale 은 건드리지 않는다 — 소수배 NEAREST 확대가 도트 격자를 다시 망가뜨린다.
+    n, durs = spec("running-right")
     run_right_frames = []
-    for i, s in enumerate(run_src):
-        dx = [-14, 4, 14, -4][i]
-        dy = [4, -6, 2, -8][i]
-        run_right_frames.append(paste_centered(s, dx=dx, dy=dy, scale=1.02))
-    rows["running-right"] = {"frames": run_right_frames, "durations": [110, 110, 110, 110]}
-    rows["running-left"] = {"frames": [flip(f) for f in run_right_frames], "durations": [110, 110, 110, 110]}
+    for i, s in enumerate(sample(front_base, n)):
+        t = i / n
+        run_right_frames.append(paste_centered(
+            s,
+            dx=round(14 * math.sin(2 * math.pi * t)),
+            dy=round(-4 - 4 * math.cos(4 * math.pi * t)),
+        ))
+    rows["running-right"] = {"frames": run_right_frames, "durations": durs}
+    _, durs_left = spec("running-left")
+    rows["running-left"] = {"frames": [flip(f) for f in run_right_frames], "durations": durs_left}
 
-    wave_src = pick(back_base, [0.0, 0.33, 0.66, 0.99])
+    n, durs = spec("waving")
     rows["waving"] = {
-        "frames": [paste_centered(s, dy=[0, -6, -8, -2][i]) for i, s in enumerate(wave_src)],
-        "durations": [160, 160, 160, 220]
+        "frames": [paste_centered(s, dy=round(-4 - 4 * math.sin(2 * math.pi * i / n)))
+                   for i, s in enumerate(sample(back_base, n))],
+        "durations": durs,
     }
 
-    base_jump = front_base[0]
-    jump_frames = [
-        paste_centered(base_jump, dy=14, scale=0.92),
-        paste_centered(base_jump, dy=-18, scale=1.03),
-        paste_centered(base_jump, dy=-34, scale=1.0),
-        paste_centered(base_jump, dy=6, scale=0.95),
-    ]
-    rows["jumping"] = {"frames": jump_frames, "durations": [140, 140, 160, 160]}
+    # 점프만 scale 을 쓴다 — 여기서의 스쿼시&스트레치는 의도된 연출이라
+    # 도트 격자가 살짝 흐트러지는 것보다 탄력이 살아나는 쪽이 낫다.
+    n, durs = spec("jumping")
+    jump_frames = []
+    for i, s in enumerate(sample(front_base, n)):
+        t = i / n
+        arc = math.sin(math.pi * t)
+        jump_frames.append(paste_centered(s, dy=round(14 - 48 * arc), scale=0.94 + 0.10 * arc))
+    rows["jumping"] = {"frames": jump_frames, "durations": durs}
 
-    fail_src = pick(front_base, [0.0, 0.3, 0.6, 0.9])
+    n, durs = spec("failed")
     fail_frames = []
-    for i, s in enumerate(fail_src):
+    for i, s in enumerate(sample(front_base, n)):
+        t = i / n
         tinted = tint(s, (220, 40, 40), 0.45 if i % 2 == 0 else 0.2)
-        fail_frames.append(paste_centered(tinted, dx=[-6, 6, -4, 0][i], dy=[2, 2, 4, 6][i]))
-    rows["failed"] = {"frames": fail_frames, "durations": [140, 140, 140, 240]}
+        fail_frames.append(paste_centered(
+            tinted, dx=round(6 * math.sin(6 * math.pi * t)), dy=round(2 + 4 * t)))
+    rows["failed"] = {"frames": fail_frames, "durations": durs}
 
     # blocked/waiting wins the priority check immediately, so it's reskinned
     # as Freeze: held on one pose (frozen == not moving) and encased in an
     # angular ice crystal, with a faint shimmer across the loop instead of
     # actual motion.
+    n, durs = spec("waiting")
     freeze_pose = paste_centered(front_base[0])
-    freeze_frames = []
-    shimmer_by_frame = [0.85, 1.0, 1.0, 0.85]
-    for i, shimmer in enumerate(shimmer_by_frame):
-        icy = tint(desaturate(freeze_pose, 0.35, 1.1), (170, 215, 250), 0.6)
-        freeze_frames.append(draw_ice_crystal(icy, shimmer=shimmer))
+    icy = tint(desaturate(freeze_pose, 0.35, 1.1), (170, 215, 250), 0.6)
     rows["waiting"] = {
-        "frames": freeze_frames,
-        "durations": [800, 700, 700, 800]
+        "frames": [draw_ice_crystal(icy, shimmer=lerp_key([0.85, 1.0, 1.0, 0.85], i / n))
+                   for i in range(n)],
+        "durations": durs,
     }
 
-    work_src = pick(front_base, [0.1, 0.4, 0.6, 0.9])
+    n, durs = spec("running")
     rows["running"] = {
-        "frames": [paste_centered(s, dy=[0, -10, 0, -6][i], scale=[1.0, 1.02, 1.0, 1.01][i])
-                   for i, s in enumerate(work_src)],
-        "durations": [120, 120, 120, 120]
+        "frames": [paste_centered(s, dy=round(-5 - 5 * math.cos(2 * math.pi * i / n)))
+                   for i, s in enumerate(sample(front_base, n))],
+        "durations": durs,
     }
 
     # done is the completion state, reskinned as Infatuation: a warm pink
     # tint (replacing the old gold) plus floating hearts instead of just a
     # color shift.
-    rev_src = pick(front_base, [0.0, 0.3, 0.6, 0.9])
+    n, durs = spec("review")
     review_frames = []
-    for i, s in enumerate(rev_src):
-        tinted = tint(s, (255, 140, 190), [0.15, 0.35, 0.5, 0.35][i])
-        frame = paste_centered(tinted, dy=[0, -4, -6, -4][i])
-        review_frames.append(draw_hearts(frame, i))
-    rows["review"] = {
-        "frames": review_frames,
-        "durations": [220, 220, 220, 220]
-    }
+    for i, s in enumerate(sample(front_base, n)):
+        t = i / n
+        pulse = 0.5 - 0.5 * math.cos(2 * math.pi * t)
+        tinted = tint(s, (255, 140, 190), 0.15 + 0.35 * pulse)
+        frame = paste_centered(tinted, dy=round(-3 - 3 * math.cos(2 * math.pi * t)))
+        review_frames.append(draw_hearts(frame, t))
+    rows["review"] = {"frames": review_frames, "durations": durs}
 
     sheet_w = FRAME * COLS
     sheet_h = FRAME * len(ROWS_ORDER)
@@ -425,7 +515,7 @@ def build_pet(pet):
         "description": pet["description"],
         "spritesheetPath": "spritesheet.png",
         "frame": {"width": FRAME, "height": FRAME},
-        "fps": 8,
+        "fps": 6,
         "defaultAnimation": "idle",
         "animations": manifest_animations
     }

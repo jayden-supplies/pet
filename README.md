@@ -40,7 +40,19 @@ Orca의 훅 서버는 열려있는 모든 에이전트 패널의 상태를 250ms
 컨셉으로 다시 스킨했습니다: `waiting`=**얼음(Freeze)**, `review`=**헤롱헤롱(Infatuation)**,
 `idle`=**잠듦(Sleep)**. `running`은 원래 그대로입니다.
 
+여기에 Orca 에는 없는 `failed` 상태를 하나 더 두었습니다 — 도구가 에러를 반환했을 때
+붉게 떨리는 모션입니다. 우선순위는 `waiting` 바로 아래로, 다른 패널이 돌고 있어도
+실패가 묻히지 않습니다.
+
 마우스를 올리면 **jumping**, 드래그하면 마우스를 따라 **running-left**/**running-right**.
+
+### 클릭 / 우클릭
+
+- **좌클릭** — 최근 작업을 브리핑합니다 (아래 "클릭하면 브리핑" 참고). 말하는 동안에는
+  **waving** 모션이 재생되고, 말풍선이 떠 있을 때 한 번 더 누르면 닫힙니다.
+- **우클릭** — 모션 메뉴. 9개 모션을 직접 골라 고정 재생할 수 있어 에이전트 상태를
+  기다리지 않고 확인할 수 있습니다. `자동`을 고르면 다시 실시간 상태를 따릅니다.
+- 드래그와 클릭은 이동 거리로 구분합니다(움직였으면 드래그, 아니면 클릭).
 
 ### 상태별로 실제 어떻게 보이는지
 
@@ -66,7 +78,8 @@ Orca의 훅 서버는 열려있는 모든 에이전트 패널의 상태를 250ms
 ```
 totodile.codex-pet/     리아코(Totodile) Orca 임포트용 번들 (Settings → Experimental → Pet → Import)
   pet.json                 매니페스트: 9행 스프라이트 레이아웃, 프레임별 타이밍
-  spritesheet.png            800x1800, 4열 x 9행, 프레임 200x200
+  spritesheet.png            2400x1800, 최대 12열 x 9행, 프레임 200x200
+                               (행마다 프레임 수가 다릅니다 — 남는 칸은 투명)
 
 ditto.codex-pet/         메타몽(Ditto) Orca 임포트용 번들 — 위와 동일한 구조
 charmander.codex-pet/    파이리(Charmander) Orca 임포트용 번들 — 위와 동일한 구조
@@ -93,8 +106,10 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
     OrcaStatusWatcher.swift    last-status.json 폴링 + 전체 상태 집계
     PetAnimationState.swift    포팅한 우선순위 로직 + 드래그 방향 판정
     SpriteSheet.swift           spritesheet.png를 애니메이션별 프레임 배열로 자름
-    PetView.swift                프레임 렌더링, 호버/드래그 처리
+    PetView.swift                프레임 렌더링, 호버/드래그/클릭/우클릭 모션 메뉴
     PetWindow.swift               테두리 없는 투명, 항상 위에 뜨는 NSWindow
+    SessionBrief.swift             ~/.claude/projects 트랜스크립트에서 최근 세션 브리핑 추출
+    SpeechBubbleWindow.swift        말풍선 패널 (펫 위에 뜨고, 화면 밖으로 안 나가게 보정)
     AppDelegate.swift              전체 연결 + 메뉴바 포켓몬 선택/Quit 메뉴
     Resources/pets/<slug>/          펫별 spritesheet.png + pet.json 번들 사본 (totodile, ditto, charmander, squirtle, geodude, eevee, chikorita, torchic)
 ```
@@ -109,6 +124,28 @@ swift run
 메뉴바에 작은 포켓볼 아이콘이 생깁니다. 클릭하면 리아코(Totodile)/메타몽(Ditto)/파이리(Charmander)/꼬부기(Squirtle)/꼬마돌(Geodude)/이브이(Eevee)/치코리타(Chikorita)/아차모(Torchic) 중 원하는 펫을 고를 수 있고(체크 표시가 현재 선택), 맨 아래 Quit으로 종료합니다. 선택한 펫은 다음 실행 때도 그대로 복원됩니다. 펫 자체는 화면 우측 하단 근처에 떠서 다른 창들 위에, 모든 Space에서 보입니다. Orca가 안 깔려있거나 활동 중인 패널이 없으면 그냥 idle 상태로 가만히 있습니다.
 
 크기는 Orca 자체 기본값(`PET_SIZE_DEFAULT=180`)보다 작게, `90pt`로 맞춰뒀습니다 (`AppDelegate.swift`의 `petSize`). 더 키우거나 줄이고 싶으면 이 값만 바꾸면 됩니다.
+
+## 클릭하면 브리핑
+
+펫을 좌클릭하면 **최근 6시간 안에 쓴 세션 5개**를, 최근 이용 순으로, 세션당 100자·합계
+500자 이내로 말풍선에 띄웁니다. 각 줄은 `· [프로젝트] 그 세션을 시작할 때 요청한 내용`
+형태입니다.
+
+출처는 Claude Code 자신의 트랜스크립트 디렉터리입니다.
+
+```
+~/.claude/projects/<슬러그화된-cwd>/<sessionId>.jsonl
+```
+
+**`claude` CLI 와 Claude Code 데스크톱 앱이 모두 여기에 기록**하고, 레코드마다 `entrypoint`
+필드(`cli` / `claude-desktop`)로 구분되기 때문에 리더 하나로 양쪽을 다 커버합니다. 둘 중
+아무것도 실행 중이 아니어도 읽힙니다.
+
+트랜스크립트는 큽니다(실측 31MB 세션 존재). 클릭에 즉시 반응해야 하므로 파일을 통째로
+읽지 않고 **앞부분 128KB 만** 읽습니다 — 필요한 건 그 세션을 무엇 때문에 시작했는지이고,
+확인해 본 모든 최근 트랜스크립트에서 첫 사용자 메시지가 앞 8KB 안에 있었습니다.
+슬래시 커맨드 껍데기·스킬 본문·주입된 리마인더처럼 사람이 쓴 요청이 아닌 레코드와,
+12자 미만의 한 마디짜리 세션은 걸러냅니다 (`SessionBrief.swift`).
 
 ## 테스트하기 (실제 에이전트 없이)
 
@@ -139,6 +176,25 @@ Orca 자체 펫으로 쓰고 싶으면(Settings → Experimental → Pet → Imp
 pip install pillow
 python3 scripts/build_sheet.py
 ```
+
+### 프레임 수와 확대 배율
+
+원본 gen5 배틀 스프라이트는 **55프레임짜리 애니메이션 GIF** 입니다. 예전에는 행마다 4장만
+뽑아 써서 재생이 슬라이드쇼처럼 끊겼고, 지금은 행마다 8~12장을 뽑습니다(`FRAME_SPEC`).
+
+같이 고친 것 세 가지입니다.
+
+- **프레임별 `autocrop` 제거** — 프레임마다 따로 잘라 중앙에 놓으면 원본 GIF 안에 들어 있던
+  호흡·바운스가 전부 지워집니다. 전 프레임 **공통 bbox** 로 잘라야 프레임 간 상대 움직임이
+  남습니다. 이어져 보이는 실제 이유가 이것입니다.
+- **정수배 확대** — 41x42 도트를 3.571배로 NEAREST 확대하면 한 도트가 3px 이 되기도 4px 이
+  되기도 해서 픽셀 격자가 무너집니다. 반올림한 정수 배율만 씁니다(내림으로 하면 꼬마돌이
+  2.79배 → 2배로 28% 작아집니다).
+- **오프셋 클램프** — `paste_centered` 가 dx/dy 를 프레임 안으로 잘라 냅니다. 예전에는
+  점프 최고점에서 머리 위가 실제로 프레임 밖으로 나가 잘리고 있었습니다.
+
+재생 속도는 원본의 자연 속도(55프레임 x 100ms = 5.5초 루프)를 기준으로 잡습니다.
+`FRAME_SPEC` 의 주석에 모션마다 자연 속도의 몇 배인지 적어 두었습니다.
 
 `scripts/build_sheet.py`의 `PETS` 리스트에 등록된 각 포켓몬(현재 리아코 #158, 메타몽 #132, 파이리 #4, 꼬부기 #7, 꼬마돌 #74, 이브이 #133, 치코리타 #152, 아차모 #255)마다 PokeAPI에서 5세대 애니메이션 배틀 스프라이트를 다시 받아서 `<slug>.codex-pet/{spritesheet.png,pet.json}`과 `ConnorPet/Sources/ConnorPet/Resources/pets/<slug>/`의 앱 번들 사본을 동시에 처음부터 재생성합니다 — 완전히 재현 가능하고, 바이너리 원본 에셋은 저장소에 커밋하지 않습니다. 새 포켓몬을 펫 선택 메뉴에 추가하려면 `PETS`에 항목을 하나 더 넣고 스크립트를 다시 돌린 뒤, `AppDelegate.swift`의 `availablePetSlugs`에 슬러그를 추가하면 됩니다.
 

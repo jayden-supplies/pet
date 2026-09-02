@@ -1,14 +1,31 @@
 import Foundation
 
 /// Mirrors Orca's `pet-agent-state.ts` PetAnimationName union.
-enum PetAnimationName: String {
+enum PetAnimationName: String, CaseIterable {
     case idle
     case running
     case waiting
     case review
     case jumping
+    case waving
+    case failed
     case runningRight = "running-right"
     case runningLeft = "running-left"
+
+    /// Korean label for the right-click motion menu.
+    var koreanLabel: String {
+        switch self {
+        case .idle:         return "잠듦 (Zzz)"
+        case .running:      return "달리기"
+        case .waiting:      return "얼음"
+        case .review:       return "헤롱헤롱"
+        case .jumping:      return "점프"
+        case .waving:       return "손 흔들기"
+        case .failed:       return "실패"
+        case .runningRight: return "오른쪽으로 달리기"
+        case .runningLeft:  return "왼쪽으로 달리기"
+        }
+    }
 }
 
 enum PetDragDirection {
@@ -20,7 +37,7 @@ enum PetDragDirection {
 /// which may belong to any Orca project/worktree currently open.
 struct AgentStatusEntry {
     let paneKey: String
-    let state: String // "working" | "blocked" | "waiting" | "done"
+    let state: String // "working" | "blocked" | "waiting" | "done" | "failed"
     let workingMode: String?
     let worktreeId: String?
     let updatedAt: Double // ms epoch
@@ -54,6 +71,7 @@ func agentStateAnimation(
     var trace: [AgentStateAnimationTrace] = []
     var hasWorking = false
     var hasDone = false
+    var hasFailed = false
 
     for entry in entries {
         guard isEntryFresh(entry, now: now, staleAfterMs: staleAfterMs) else {
@@ -64,7 +82,14 @@ func agentStateAnimation(
             trace.append(.init(line: "\(entry.paneKey): \(entry.state) → top-priority rule, short-circuit"))
             return AgentStateAnimationResult(animation: .waiting, trace: trace)
         }
-        if entry.state == "working", entry.workingMode != "monitoring" {
+        // "failed" is not one of Orca's own states — it is an extension for the
+        // Claude Code bridge, which reports a tool that came back with an error.
+        // It ranks below waiting (which needs the user to act right now) but
+        // above working, so a failure is not hidden by other panes still running.
+        if entry.state == "failed" {
+            hasFailed = true
+            trace.append(.init(line: "\(entry.paneKey): failed → candidate"))
+        } else if entry.state == "working", entry.workingMode != "monitoring" {
             hasWorking = true
             trace.append(.init(line: "\(entry.paneKey): working → candidate"))
         } else if entry.state == "done" {
@@ -73,6 +98,9 @@ func agentStateAnimation(
         }
     }
 
+    if hasFailed {
+        return AgentStateAnimationResult(animation: .failed, trace: trace)
+    }
     if hasWorking {
         return AgentStateAnimationResult(animation: .running, trace: trace)
     }
