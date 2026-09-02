@@ -1,6 +1,6 @@
 # connor-pet
 
-실제 [Orca](https://github.com/stablyai/orca) 또는 [Claude Code](https://claude.com/claude-code)의 프로젝트/에이전트 상태에 반응하는 데스크톱 펫 — 리아코 (Totodile), 메타몽 (Ditto), 파이리 (Charmander), 꼬부기 (Squirtle), 꼬마돌 (Geodude), 이브이 (Eevee), 치코리타 (Chikorita), 아차모 (Torchic) 중 메뉴바 아이콘에서 언제든 전환 가능합니다. Orca에 임포트하는 `.codex-pet` 번들이 아니라, **완전히 별개의 macOS 앱**으로 만들었습니다. Orca/Claude Code와 다른 프로세스로 떠 있으면서, 바깥에서 그 상태를 읽어옵니다.
+실제 [Orca](https://github.com/stablyai/orca) 또는 [Claude Code](https://claude.com/claude-code)의 프로젝트/에이전트 상태에 반응하는 데스크톱 펫 — 리아코 (Totodile), 메타몽 (Ditto), 파이리 (Charmander), 꼬부기 (Squirtle), 꼬마돌 (Geodude), 이브이 (Eevee), 치코리타 (Chikorita), 아차모 (Torchic) 중 메뉴바 아이콘에서 언제든 전환 가능합니다. Orca에 임포트하는 `.codex-pet` 번들이 아니라, **완전히 별개의 macOS 앱**으로 만들었습니다. Orca/Claude Code와 다른 프로세스로 떠 있으면서, 바깥에서 그 상태를 읽어옵니다. 여기에 더해, 같은 Wi-Fi에서 앱을 켜둔 사람끼리 **디지몬 다마고치 스타일 1:1 대전**도 할 수 있습니다 (아래 "같은 wifi에서 대전하기" 참고).
 
 ![펫 목록](docs/pet-gallery.png)
 
@@ -124,6 +124,28 @@ Orca의 훅 서버는 열려있는 모든 에이전트 패널의 상태를 250ms
 `draw_hearts()`/`draw_zzz()`로 PNG에 직접 구운 것이라, Swift 쪽 코드는 건드리지 않았습니다
 (애니메이션 우선순위/재생 로직은 그대로, 스프라이트 픽셀만 다시 구운 것).
 
+## 같은 wifi에서 대전하기 (디지몬 다마고치 스타일)
+
+같은 Wi-Fi에 이 앱을 켜둔 사람끼리 **1:1 대전**을 할 수 있습니다 — 디지몬 다마고치처럼 대전 신청 → 상대가 수락 → 양쪽이 동시에 같은 대전 화면을 봅니다.
+
+- 메뉴바 아이콘 → **대전** 서브메뉴에 같은 Wi-Fi에서 실행 중인 다른 앱들이 뜹니다 (없으면 "주변에 상대가 없어요").
+- 상대를 고르면 그쪽에 **수락/거절** 창이 뜨고, 수락하면 양쪽에서 대전 창이 열려 두 펫이 마주 보고 발사체를 주고받으며 HP를 깎다가 **WIN!/LOSE**로 승패를 보여줍니다.
+
+서버가 필요 없습니다. Apple의 **Network.framework**만 씁니다:
+
+- **발견**: 각 앱이 `_connorpet._tcp` Bonjour 서비스를 광고(`NWListener`)하고 동시에 탐색(`NWBrowser`)합니다. TXT 레코드에 인스턴스 UUID·표시 이름·펫 슬러그를 실어, 자기 자신은 걸러내고 상대의 캐릭터까지 그대로 그립니다.
+- **핸드셰이크**: 신청/수락/거절은 하나의 TCP 연결(`NWConnection`) 위에서 length-prefixed JSON으로 주고받습니다 (`BattleService.swift`).
+- **결정론적 대전**: 수락하는 쪽이 랜덤 `seed` 하나를 정해 보내면, **양쪽이 그 seed로 똑같은 시뮬레이션**(`BattleSimulation.swift`)을 돌려 동일한 라운드·승패를 계산합니다. 프레임 단위 동기화가 필요 없어서(서로 믿을 필요도 없이) 양쪽 화면이 정확히 같은 결과를 냅니다. 역할(신청자=challenger / 수락자=accepter)이 고정이라 누가 어느 쪽에 서는지도 양쪽이 일치합니다.
+
+> **네트워크 주의**: 게스트/회사 Wi-Fi 중 "클라이언트 격리(AP isolation)"가 켜진 곳에서는 같은 네트워크라도 기기끼리 서로 못 봅니다. 그럴 땐 집 Wi-Fi나 핫스팟에서 테스트하세요. macOS 15(Sequoia)부터는 로컬 네트워크 접근 권한 팝업이 뜰 수 있습니다(허용해야 발견됩니다).
+
+핸드셰이크 로직은 실제 앱 없이 헤드리스로 검증할 수 있습니다 — 한 프로세스에서 두 서비스를 띄워 발견→신청→수락→결과 합의까지 확인하고 `SELFTEST PASS`를 찍습니다:
+
+```sh
+cd ConnorPet
+CONNORPET_SELFTEST=battle swift run
+```
+
 ## 폴더 구조
 
 ```
@@ -170,7 +192,11 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
     SpriteSheet.swift           spritesheet.png를 애니메이션별 프레임 배열로 자름
     PetView.swift                프레임 렌더링, 호버/드래그 처리
     PetWindow.swift               테두리 없는 투명, 항상 위에 뜨는 NSWindow
-    AppDelegate.swift              전체 연결 + 메뉴바 포켓몬 선택/Quit 메뉴
+    BattleService.swift            같은 wifi 발견(Bonjour, NWListener/NWBrowser) + 대전 신청/수락 핸드셰이크
+    BattleSimulation.swift         seed 하나로 양쪽이 똑같이 계산하는 결정론적 대전 시뮬레이션
+    BattleWindow.swift             1:1 대전 화면 (두 펫이 마주 보고 발사체 교환 + HP + WIN/LOSE)
+    BattleSelfTest.swift           CONNORPET_SELFTEST=battle 로 도는 헤드리스 핸드셰이크 검증
+    AppDelegate.swift              전체 연결 + 메뉴바 포켓몬 선택/상태 소스/대전/Quit 메뉴
     Resources/pets/<slug>/          펫별 spritesheet.png + pet.json 번들 사본 (totodile, ditto, charmander, squirtle, geodude, eevee, chikorita, torchic)
 ```
 
@@ -181,7 +207,7 @@ cd ConnorPet
 swift run
 ```
 
-메뉴바에 작은 포켓볼 아이콘이 생깁니다. 클릭하면 위쪽엔 리아코(Totodile)/메타몽(Ditto)/파이리(Charmander)/꼬부기(Squirtle)/꼬마돌(Geodude)/이브이(Eevee)/치코리타(Chikorita)/아차모(Torchic) 중 원하는 펫을, 그 아래엔 상태 소스로 **Claude Code**(기본값)/**Orca** 중 하나를 고를 수 있고(체크 표시가 각각 현재 선택), 맨 아래 Quit으로 종료합니다. 두 선택 모두 다음 실행 때도 그대로 복원됩니다. 펫 자체는 화면 우측 하단 근처에 떠서 다른 창들 위에, 모든 Space에서 보입니다. 선택한 소스가 안 깔려있거나 활동 중인 세션/패널이 없으면 그냥 idle 상태로 가만히 있습니다.
+메뉴바에 작은 포켓볼 아이콘이 생깁니다. 클릭하면 위쪽엔 리아코(Totodile)/메타몽(Ditto)/파이리(Charmander)/꼬부기(Squirtle)/꼬마돌(Geodude)/이브이(Eevee)/치코리타(Chikorita)/아차모(Torchic) 중 원하는 펫을, 그 아래엔 상태 소스로 **Claude Code**(기본값)/**Orca** 중 하나를 고를 수 있고(체크 표시가 각각 현재 선택), 그 아래 **대전**으로 같은 Wi-Fi의 상대에게 대전을 신청하고(위 "같은 wifi에서 대전하기" 참고), 맨 아래 Quit으로 종료합니다. 두 선택 모두 다음 실행 때도 그대로 복원됩니다. 펫 자체는 화면 우측 하단 근처에 떠서 다른 창들 위에, 모든 Space에서 보입니다. 선택한 소스가 안 깔려있거나 활동 중인 세션/패널이 없으면 그냥 idle 상태로 가만히 있습니다.
 
 크기는 Orca 자체 기본값(`PET_SIZE_DEFAULT=180`)보다 작게, `90pt`로 맞춰뒀습니다 (`AppDelegate.swift`의 `petSize`). 더 키우거나 줄이고 싶으면 이 값만 바꾸면 됩니다.
 
