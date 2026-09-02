@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let briefSessionLimit = 5
     private let briefCharsPerSession = 100
     private let briefCharBudget = 500
+    private var watcher: AgentStatusWatching?
 
     // Orca's own default (PET_SIZE_DEFAULT=180) still read as "big" next to the
     // small nav-badge-style pet icon the user is comparing against — sized
@@ -26,6 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic"]
     private var petDisplayNames: [String: String] = [:]
     private var selectedPetSlug = availablePetSlugs[0]
+
+    // Which live status source drives the pet's animation. "claude-code" polls
+    // ~/.claude/sessions/*.json every 250ms; "orca" polls Orca's last-status.json
+    // every 1s (see ClaudeCodeStatusWatcher/OrcaStatusWatcher).
+    private static let availableStatusSources = ["claude-code", "orca"]
+    private static let statusSourceDisplayNames = ["claude-code": "Claude Code", "orca": "Orca"]
+    private var selectedStatusSource = availableStatusSources[0]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu-bar utility, no Dock icon
@@ -70,6 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.bubble?.show(text: text, above: petFrame, duration: duration)
         }
         view.onSilence = { [weak self] in self?.bubble?.hide() }
+        view.onHoverEnter = { [weak self] in
+            self?.watcher?.acknowledgeDone()
+        }
         win.contentView = view
         win.makeKeyAndOrderFront(nil)
 
@@ -133,6 +144,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lines.append(line)
         }
         return lines.joined(separator: "\n")
+        selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
+        startWatcher(for: selectedStatusSource)
     }
 
     private func setUpStatusItem() {
@@ -155,6 +168,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(menuItem)
         }
         menu.addItem(.separator())
+        for source in Self.availableStatusSources {
+            let title = Self.statusSourceDisplayNames[source] ?? source
+            let menuItem = NSMenuItem(title: title, action: #selector(selectStatusSource(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.representedObject = source
+            menuItem.state = (source == selectedStatusSource) ? .on : .off
+            menu.addItem(menuItem)
+        }
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -168,6 +190,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         petView?.setSpriteSheet(sheet)
         Self.savePetSlug(slug)
         rebuildMenu()
+    }
+
+    // MARK: - Menu-bar status-source picker
+
+    @objc private func selectStatusSource(_ sender: NSMenuItem) {
+        guard let source = sender.representedObject as? String, source != selectedStatusSource else { return }
+        selectedStatusSource = source
+        Self.saveStatusSource(source)
+        startWatcher(for: source)
+        rebuildMenu()
+    }
+
+    private func startWatcher(for source: String) {
+        watcher?.stop()
+        let newWatcher: AgentStatusWatching = (source == "orca") ? OrcaStatusWatcher() : ClaudeCodeStatusWatcher()
+        newWatcher.onUpdate = { [weak self] result in
+            self?.petView?.setBaseAnimation(result.animation)
+        }
+        newWatcher.start()
+        watcher = newWatcher
     }
 
     private static func loadSpriteSheet(slug: String) throws -> SpriteSheet {
@@ -240,6 +282,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // no longer has bundled resources (e.g. removed from a future build).
     private static func savedPetSlug(fallback: String, validSlugs: Set<String>) -> String {
         guard let saved = UserDefaults.standard.string(forKey: selectedPetDefaultsKey), validSlugs.contains(saved) else {
+            return fallback
+        }
+        return saved
+    }
+
+    // MARK: - Selected status-source persistence
+
+    private static let selectedStatusSourceDefaultsKey = "selectedStatusSource"
+
+    private static func saveStatusSource(_ source: String) {
+        UserDefaults.standard.set(source, forKey: selectedStatusSourceDefaultsKey)
+    }
+
+    // Falls back to `fallback` ("claude-code") if nothing was saved yet, or if
+    // the saved value isn't one of the sources this build knows about.
+    private static func savedStatusSource(fallback: String) -> String {
+        guard let saved = UserDefaults.standard.string(forKey: selectedStatusSourceDefaultsKey),
+              availableStatusSources.contains(saved) else {
             return fallback
         }
         return saved

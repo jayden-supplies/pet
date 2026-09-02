@@ -33,6 +33,19 @@ enum PetDragDirection {
     case left
 }
 
+/// Common interface for the two interchangeable status sources the menu-bar
+/// picker can select between (Orca's last-status.json vs. Claude Code's own
+/// session files) — AppDelegate holds exactly one active instance at a time.
+protocol AgentStatusWatching: AnyObject {
+    var onUpdate: ((AgentStateAnimationResult) -> Void)? { get set }
+    func start()
+    func stop()
+    /// Called when the user notices the pet (currently: on hover) — suppresses
+    /// any "done"/review state observed *before* this call until a newer one
+    /// arrives, so review doesn't linger forever once you've actually seen it.
+    func acknowledgeDone()
+}
+
 /// One entry read from `last-status.json`'s `entries` map — a single agent pane,
 /// which may belong to any Orca project/worktree currently open.
 struct AgentStatusEntry {
@@ -108,6 +121,24 @@ func agentStateAnimation(
         return AgentStateAnimationResult(animation: .review, trace: trace)
     }
     return AgentStateAnimationResult(animation: .idle, trace: trace)
+}
+
+/// Downgrades "done" entries the user has already acknowledged (see
+/// `AgentStatusWatching.acknowledgeDone()`) to "idle" so review doesn't
+/// reappear on the next poll purely because the underlying source (Orca's
+/// file, or our own hook-authored one) hasn't moved past "done" yet — it only
+/// comes back once a *newer* done event lands (updatedAt > acknowledgedAtMs).
+func suppressAcknowledgedDone(_ entries: [AgentStatusEntry], acknowledgedAtMs: Double) -> [AgentStatusEntry] {
+    entries.map { entry in
+        guard entry.state == "done", entry.updatedAt <= acknowledgedAtMs else { return entry }
+        return AgentStatusEntry(
+            paneKey: entry.paneKey,
+            state: "idle",
+            workingMode: entry.workingMode,
+            worktreeId: entry.worktreeId,
+            updatedAt: entry.updatedAt
+        )
+    }
 }
 
 /// Ported from `usePetPointerInteraction.ts` / `nextPetDragAnimation`.
