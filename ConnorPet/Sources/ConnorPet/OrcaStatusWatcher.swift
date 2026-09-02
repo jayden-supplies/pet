@@ -47,7 +47,7 @@ private func parseEntries(from data: Data) -> [AgentStatusEntry] {
 ///
 /// Orca debounces writes to this file at 250ms, so a 1s poll is comfortably
 /// within its real update cadence without needing FSEvents.
-final class OrcaStatusWatcher {
+final class OrcaStatusWatcher: AgentStatusWatching {
     private let fileURL: URL
     private let pollInterval: TimeInterval
     private var timer: Timer?

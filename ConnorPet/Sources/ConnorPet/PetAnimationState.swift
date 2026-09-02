@@ -16,6 +16,15 @@ enum PetDragDirection {
     case left
 }
 
+/// Common interface for the two interchangeable status sources the menu-bar
+/// picker can select between (Orca's last-status.json vs. Claude Code's own
+/// session files) — AppDelegate holds exactly one active instance at a time.
+protocol AgentStatusWatching: AnyObject {
+    var onUpdate: ((AgentStateAnimationResult) -> Void)? { get set }
+    func start()
+    func stop()
+}
+
 /// One entry read from `last-status.json`'s `entries` map — a single agent pane,
 /// which may belong to any Orca project/worktree currently open.
 struct AgentStatusEntry {
