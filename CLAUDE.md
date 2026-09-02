@@ -45,4 +45,4 @@ UI/동작을 변경했으면 반드시 `swift run`으로 실제 앱을 띄워서
   README와 실제 동작이 어긋나는 부분(예: 코드에서 바뀐 아이콘·플래그·경로가 README에 옛날 그대로 남아있는 경우)을 발견하면 관련 작업이 아니어도 그 자리에서 같이 고칠 것.
 - **브랜치 전략 없음, 항상 main에 push**: 이 저장소는 기능 브랜치/PR 없이 `main` 하나로만 운영한다. 별도 요청이 없는 한 작업이 끝나면 변경사항을 커밋하고 `git push origin main`까지 완료한 뒤 마칠 것.
 - **커밋 메시지는 항상 한글로 작성**: 제목/본문 모두 한글로 쓸 것 (`Co-Authored-By:` 트레일러 등 고정 형식 줄은 예외).
-- **`main` 브랜치는 보호 룰셋이 없음** (2026-09-02 `protect-main`/`require-pr-except-admin` 룰셋 둘 다 삭제함): write 협업자(`dev-connor`, `jayden-supplies`)는 PR/승인 없이 `main`에 직접 push 가능하고, force-push/브랜치 삭제도 막혀있지 않다. 새 협업자를 추가하는 게 아니라면 write 권한 범위는 이 두 명 그대로 유지한다. 룰셋 현황 확인 명령: `gh api repos/dev-connor/connor-pet/rulesets`.
+- **`main` 브랜치는 보호 룰셋이 없음** (2026-09-02 `protect-main`/`require-pr-except-admin` 룰셋 둘 다 삭제함): write 협업자(`dev-connor`, `jayden-supplies`, `Eve-Supplies`, `jenna-supplies`, `vince-supplies`, `Austin-Supplies`, `Alan-Supplies`)는 PR/승인 없이 `main`에 직접 push 가능하고, force-push/브랜치 삭제도 막혀있지 않다. 협업자 현황 확인 명령: `gh api repos/dev-connor/connor-pet/collaborators --jq '.[] | {login, permissions}'`. 룰셋 현황 확인 명령: `gh api repos/dev-connor/connor-pet/rulesets`.
