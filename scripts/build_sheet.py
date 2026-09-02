@@ -394,17 +394,13 @@ def draw_zzz(frame, t):
 def build_pet(pet):
     dex_id = pet["dex_id"]
     front_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{dex_id}.gif"
-    back_url = f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/back/{dex_id}.gif"
     front_path = fetch(front_url, os.path.join(CACHE_DIR, f"{dex_id}_front.gif"))
-    back_path = fetch(back_url, os.path.join(CACHE_DIR, f"{dex_id}_back.gif"))
 
     front_raw = load_frames(front_path)
-    back_raw = load_frames(back_path)
 
     # 원본은 55프레임짜리 애니메이션 GIF다. 전 프레임 공통 bbox 로 잘라서
     # 프레임 간 상대 움직임(호흡·바운스)을 보존하고, 정수배로만 확대한다.
     front_base = prepare_frames(front_raw)
-    back_base = prepare_frames(back_raw)
 
     rows = {}
 
@@ -422,23 +418,34 @@ def build_pet(pet):
 
     # 좌우 이동은 원본 프레임이 이미 다리 움직임을 갖고 있으므로 dx 만 얹는다.
     # scale 은 건드리지 않는다 — 소수배 NEAREST 확대가 도트 격자를 다시 망가뜨린다.
-    n, durs = spec("running-right")
-    run_right_frames = []
+    #
+    # 방향 주의: gen5 front 스프라이트는 몸이 왼쪽으로 틀어져 있어(픽셀 무게중심이
+    # 왼쪽) **왼쪽을 보고 있다.** 그래서 뒤집지 않은 프레임이 running-left 이고,
+    # 좌우 반전한 쪽이 running-right 다. 예전에는 이게 반대로 들어가 있어서
+    # 오른쪽으로 드래그하면 펫이 왼쪽을 보고 끌려갔다.
+    n, durs = spec("running-left")
+    run_left_frames = []
     for i, s in enumerate(sample(front_base, n)):
         t = i / n
-        run_right_frames.append(paste_centered(
+        run_left_frames.append(paste_centered(
             s,
             dx=round(14 * math.sin(2 * math.pi * t)),
             dy=round(-4 - 4 * math.cos(4 * math.pi * t)),
         ))
-    rows["running-right"] = {"frames": run_right_frames, "durations": durs}
-    _, durs_left = spec("running-left")
-    rows["running-left"] = {"frames": [flip(f) for f in run_right_frames], "durations": durs_left}
+    rows["running-left"] = {"frames": run_left_frames, "durations": durs}
+    _, durs_right = spec("running-right")
+    rows["running-right"] = {"frames": [flip(f) for f in run_left_frames], "durations": durs_right}
 
+    # waving 은 펫이 말하는 동안 재생된다. 예전에는 뒷모습(back) 스프라이트로 만들어서
+    # 브리핑을 읽어 주는 내내 등을 돌리고 있었다. 앞모습으로 굽고, 좌우로 살짝 흔들리는
+    # 리듬을 줘서 running(위아래 바운스)과 구분되게 한다.
     n, durs = spec("waving")
     rows["waving"] = {
-        "frames": [paste_centered(s, dy=round(-4 - 4 * math.sin(2 * math.pi * i / n)))
-                   for i, s in enumerate(sample(back_base, n))],
+        "frames": [paste_centered(
+                       s,
+                       dx=round(4 * math.sin(2 * math.pi * i / n)),
+                       dy=round(-3 - 3 * math.cos(4 * math.pi * i / n)))
+                   for i, s in enumerate(sample(front_base, n))],
         "durations": durs,
     }
 
