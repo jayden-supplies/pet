@@ -2,9 +2,13 @@ import Foundation
 
 /// One recent Claude Code session, condensed to a single line the pet can say.
 struct SessionBrief {
+    let id: String            // sessionId — 요약 캐시가 같은 세션 묶음인지 판별하는 키
     let project: String       // cwd's last path component
     let branch: String?       // gitBranch at the time the session started
     let text: String          // already truncated to the caller's char budget
+    /// 이 세션에서 **최근에** 요청한 것들. 첫 메시지가 세션의 목표라면 이쪽은
+    /// 지금 무엇을 하고 있는지에 가깝다. 요약기가 이걸 재료로 쓴다.
+    let recent: [String]
     let updatedAt: Date
     let isDesktop: Bool       // claude-desktop vs cli, for the "어디서" hint
 }
@@ -24,6 +28,10 @@ struct SessionBrief {
 /// recent transcript checked. `readHeadBytes` caps the read well above that.
 enum SessionBriefReader {
     private static let readHeadBytes = 128 * 1024
+    /// 최근 메시지는 파일 끝에서 읽는다. 헤드와 같은 이유로 통째로 읽지 않는다.
+    private static let readTailBytes = 192 * 1024
+    private static let recentMessageCount = 4
+    private static let recentMessageChars = 220
 
     static var transcriptsDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -83,6 +91,7 @@ enum SessionBriefReader {
         var found: [Transcript] = []
         for case let url as URL in walker {
             guard url.pathExtension == "jsonl" else { continue }
+            guard !isSelfGenerated(url) else { continue }
             guard
                 let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                 values.isRegularFile == true,
@@ -92,6 +101,16 @@ enum SessionBriefReader {
             found.append(Transcript(url: url, modifiedAt: modified))
         }
         return found.sorted { $0.modifiedAt > $1.modifiedAt }
+    }
+
+    /// 요약기가 돌린 `claude -p` 세션의 트랜스크립트인가.
+    ///
+    /// 그 호출도 Claude Code 세션이라 트랜스크립트를 남긴다. 걸러 내지 않으면
+    /// 다음 브리핑에 "펫이 자기 요약을 요약한 내용"이 섞인다. 요약기는 전용
+    /// 작업 디렉터리에서 돌고, Claude Code 는 cwd 를 슬러그화해 폴더 이름으로
+    /// 쓰므로 폴더 이름만 봐도 구분된다.
+    private static func isSelfGenerated(_ url: URL) -> Bool {
+        url.deletingLastPathComponent().lastPathComponent.contains("ConnorPet")
     }
 
     // MARK: - Parsing
@@ -132,14 +151,46 @@ enum SessionBriefReader {
         }
 
         guard let id = sessionId, let text = opening else { return nil }
+        let recent = recentMessages(in: file)
         let project = cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "?"
         return (id, SessionBrief(
+            id: id,
             project: project,
             branch: branch,
             text: truncate(text, to: perBriefChars),
+            recent: recent,
             updatedAt: modifiedAt,
             isDesktop: isDesktop
         ))
+    }
+
+    /// 파일 끝에서 사용자가 최근 보낸 메시지들을 오래된 것부터 순서대로 뽑는다.
+    private static func recentMessages(in url: URL) -> [String] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return [] }
+        let start = size > UInt64(readTailBytes) ? size - UInt64(readTailBytes) : 0
+        try? handle.seek(toOffset: start)
+        guard let data = try? handle.readToEnd() else { return [] }
+
+        // 임의 위치에서 잘라 읽었으므로 첫 줄은 대개 반쪽짜리다. 그래서 1부터.
+        var lines = data.split(separator: UInt8(ascii: "\n"))
+        if start > 0, !lines.isEmpty { lines.removeFirst() }
+
+        var found: [String] = []
+        for line in lines.reversed() {
+            guard
+                let object = try? JSONSerialization.jsonObject(with: Data(line)),
+                let record = object as? [String: Any],
+                record["type"] as? String == "user",
+                (record["isSidechain"] as? Bool) != true,
+                let raw = userText(in: record),
+                let cleaned = clean(raw)
+            else { continue }
+            found.append(truncate(cleaned, to: recentMessageChars))
+            if found.count >= recentMessageCount { break }
+        }
+        return found.reversed()
     }
 
     private static func readHead(of url: URL) -> Data? {

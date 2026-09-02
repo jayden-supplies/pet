@@ -138,6 +138,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
         startWatcher(for: selectedStatusSource)
 
+        // 첫 클릭이 원문 발췌로 떨어지지 않도록, 뜨자마자 한 번 요약해 둔다.
+        // 클릭과 똑같은 선택 로직을 쓴다.
+        BriefingSummarizer.refresh(briefs: currentBriefs().briefs,
+                                   perBriefChars: briefCharsPerSession)
+
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
             let text = briefingText() ?? "(브리핑 없음)"
             FileHandle.standardError.write("[connor-pet] 클릭 브리핑 미리보기 (\(text.count)자):\n\(text)\n".data(using: .utf8)!)
@@ -170,7 +175,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// What the pet says when clicked: the most recent sessions and what each
     /// one was started to do. Reads Claude Code's own transcripts, so it covers
     /// both the CLI and the desktop app without either being running.
-    private func briefingText() -> String? {
+    /// 지금 말해야 할 브리프 묶음과 앞에 붙일 문장. 클릭과 예열이 **같은** 묶음을
+    /// 보게 하려고 뽑아 뒀다 — 다르면 예열이 엉뚱한 걸 요약하고 캐시가 늘 빗나간다.
+    private func currentBriefs() -> (briefs: [SessionBrief], prefix: String?, empty: String?) {
         // 불뿜기는 "여기까지 정리, 이제부터 할 일만 본다"는 표시다. 최근 3시간
         // 안에 뿜었다면 고정 3시간 창 대신 **그 시점 이후**만 보여 준다.
         if let firedAt = Self.savedFireBreathAt() {
@@ -181,36 +188,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     limit: briefPrimaryLimit,
                     perBriefChars: briefCharsPerSession
                 )
-                if briefs.isEmpty {
-                    return "불 뿜은 뒤로 새로 시작한 작업은 아직 없어. 깨끗해."
-                }
-                return render(briefs, prefix: "불 뿜은 뒤로 이것들만 남았어.")
+                return (briefs, "불 뿜은 뒤로 이것들만 남았어.",
+                        "불 뿜은 뒤로 새로 시작한 작업은 아직 없어. 깨끗해.")
             }
         }
 
-        var briefs = SessionBriefReader.recent(
+        let primary = SessionBriefReader.recent(
             withinHours: briefPrimaryHours,
             limit: briefPrimaryLimit,
             perBriefChars: briefCharsPerSession
         )
-        var isFallback = false
-        if briefs.isEmpty {
-            briefs = SessionBriefReader.recent(
-                withinHours: briefFallbackHours,
-                limit: briefFallbackLimit,
-                perBriefChars: briefCharsPerSession
-            )
-            isFallback = true
-        }
-        guard !briefs.isEmpty else {
-            return "최근 \(Int(briefFallbackHours))시간 안에 작업한 게 없어. 푹 쉬었구나?"
-        }
+        if !primary.isEmpty { return (primary, nil, nil) }
 
-        // 2순위로 내려왔다는 건 방금까지 한 일이 아니라는 뜻이라, 그렇다고 말해 준다.
-        // 안 그러면 이틀 전 작업을 지금 하던 일로 읽는다.
-        return render(briefs, prefix: isFallback
-            ? "최근 \(Int(briefPrimaryHours))시간은 조용했어. 그 전엔 이런 걸 했어."
-            : nil)
+        let fallback = SessionBriefReader.recent(
+            withinHours: briefFallbackHours,
+            limit: briefFallbackLimit,
+            perBriefChars: briefCharsPerSession
+        )
+        return (fallback,
+                "최근 \(Int(briefPrimaryHours))시간은 조용했어. 그 전엔 이런 걸 했어.",
+                "최근 \(Int(briefFallbackHours))시간 안에 작업한 게 없어. 푹 쉬었구나?")
+    }
+
+    /// What the pet says when clicked: the most recent sessions and what each
+    /// one is doing. Reads Claude Code's own transcripts, so it covers both the
+    /// CLI and the desktop app without either being running.
+    private func briefingText() -> String? {
+        let (briefs, prefix, empty) = currentBriefs()
+        guard !briefs.isEmpty else { return empty }
+        return summarizedOrRaw(briefs, prefix: prefix)
+    }
+
+    /// 요약본이 있으면 그걸 쓰고, 없으면 원문 발췌로 대신하면서 다음 클릭을 위해
+    /// 백그라운드 요약을 걸어 둔다. 요약은 10초쯤 걸려서 클릭을 붙잡아 둘 수 없다.
+    private func summarizedOrRaw(_ briefs: [SessionBrief], prefix: String?) -> String {
+        let mark = BriefingSummarizer.fingerprint(briefs)
+        if let cache = BriefingSummarizer.cached(),
+           cache.fingerprint == mark,
+           Date().timeIntervalSince(cache.generatedAt) < BriefingSummarizer.cacheTTL {
+            return [prefix, cache.text].compactMap { $0 }.joined(separator: "\n")
+        }
+        BriefingSummarizer.refresh(briefs: briefs, perBriefChars: briefCharsPerSession)
+        return render(briefs, prefix: prefix)
     }
 
     /// 브리프들을 말풍선 한 덩어리로 만든다. 접두 문장도 글자 예산에 포함한다.
