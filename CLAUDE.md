@@ -7,6 +7,9 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
 - `ConnorPet/` — 실제 결과물인 독립 macOS 앱 (Swift Package, Xcode 불필요)
   - `Sources/ConnorPet/OrcaStatusWatcher.swift` — `last-status.json` 폴링(1s) + 상태 집계 (Orca 소스)
   - `Sources/ConnorPet/ClaudeCodeStatusWatcher.swift` — `~/.claude/sessions/*.json`(항상) + `~/.claude/connor-pet-status.json`(훅 설치 시)을 250ms마다 폴링해 병합 (Claude Code 소스, 기본값)
+  - `Sources/ConnorPet/ClaudeDesktopStatusWatcher.swift` — Claude 데스크톱 앱 소스. 렌더러 CPU(신호1)+알림센터 DB(신호2)를 500ms 폴링해 잠듦/달리기/얼음/헤롱헤롱 판정. AX가 Claude 웹 콘텐츠를 안 뿜어서 CPU 휴리스틱을 씀
+  - `Sources/ConnorPet/ClaudeProcessActivity.swift` — Claude 프로세스 트리 CPU 샘플러(`proc_pid_rusage`, mach 틱→ns timebase 변환). "생성 중=달리기" 신호
+  - `Sources/ConnorPet/NotificationCenterDB.swift` — macOS 알림센터 SQLite DB 읽기(Full Disk Access 필요). Claude 완료 알림="헤롱헤롱" 신호
   - `Sources/ConnorPet/PetAnimationState.swift` — 우선순위 로직 포팅 + `AgentStatusWatching` 프로토콜 (`acknowledgeDone()`으로 헤롱헤롱 호버-해제)
   - `Sources/ConnorPet/SpriteSheet.swift`, `PetView.swift`, `PetWindow.swift` — 렌더링
   - `Sources/ConnorPet/AppDelegate.swift` — 앱 연결, 메뉴바 아이콘/펫 선택/소스 선택 메뉴

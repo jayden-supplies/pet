@@ -1,12 +1,12 @@
 # connor-pet
 
-실제 [Orca](https://github.com/stablyai/orca) 또는 [Claude Code](https://claude.com/claude-code)의 프로젝트/에이전트 상태에 반응하는 데스크톱 펫 — 리아코 (Totodile), 메타몽 (Ditto), 파이리 (Charmander), 꼬부기 (Squirtle), 꼬마돌 (Geodude), 이브이 (Eevee), 치코리타 (Chikorita), 아차모 (Torchic) 중 메뉴바 아이콘에서 언제든 전환 가능합니다. Orca에 임포트하는 `.codex-pet` 번들이 아니라, **완전히 별개의 macOS 앱**으로 만들었습니다. Orca/Claude Code와 다른 프로세스로 떠 있으면서, 바깥에서 그 상태를 읽어옵니다.
+실제 [Orca](https://github.com/stablyai/orca), [Claude Code](https://claude.com/claude-code), 또는 [Claude 데스크톱 앱](https://claude.ai/download)의 프로젝트/에이전트 상태에 반응하는 데스크톱 펫 — 리아코 (Totodile), 메타몽 (Ditto), 파이리 (Charmander), 꼬부기 (Squirtle), 꼬마돌 (Geodude), 이브이 (Eevee), 치코리타 (Chikorita), 아차모 (Torchic) 중 메뉴바 아이콘에서 언제든 전환 가능합니다. Orca에 임포트하는 `.codex-pet` 번들이 아니라, **완전히 별개의 macOS 앱**으로 만들었습니다. Orca/Claude Code/Claude 앱과 다른 프로세스로 떠 있으면서, 바깥에서 그 상태를 읽어옵니다.
 
 ![펫 목록](docs/pet-gallery.png)
 
 ## 어떻게 가능한가
 
-메뉴바 아이콘에서 상태 소스를 **Claude Code**(기본값) 또는 **Orca** 중 고를 수 있습니다. 어느 쪽이든 `AgentStatusWatching` 프로토콜을 구현한 워처가 폴링해서 같은 우선순위 로직(`PetAnimationState.swift`의 `agentStateAnimation`, Orca의 `pet-agent-state.ts` 포팅)에 넣어 최종 애니메이션을 뽑아냅니다:
+메뉴바 아이콘에서 상태 소스를 **Claude Code**(기본값), **Orca**, 또는 **Claude Desktop** 중 고를 수 있습니다. 모두 `AgentStatusWatching` 프로토콜을 구현한 워처가 폴링해서 최종 애니메이션을 뽑아냅니다. Claude Code/Orca 소스는 같은 우선순위 로직(`PetAnimationState.swift`의 `agentStateAnimation`, Orca의 `pet-agent-state.ts` 포팅)을 공유합니다:
 
 1. 하나라도 `blocked`/`waiting` → **waiting** (최우선, 즉시 확정)
 2. 없고 하나라도 `working` → **running**
@@ -77,6 +77,47 @@ python3 scripts/install_claude_hooks.py --uninstall  # connor-pet이 추가한 �
 `scripts/claude_hook_status.py`는 각 훅이 stdin으로 받는 JSON(`session_id`/`cwd` 포함)을 읽어서 `~/.claude/connor-pet-status.json`을 Orca의 `last-status.json`과 같은 형태로 갱신합니다(동시에 여러 세션이 훅을 발생시켜도 안전하도록 `fcntl.flock`으로 잠그고 원자적으로 씀). `ClaudeCodeStatusWatcher`는 이 파일이 있으면 세션 파일의 busy/idle보다 우선해서 씁니다 — 훅을 설정 안 해도 앱은 그대로 동작하고(예전처럼 busy/idle만), 설정하면 자동으로 더 정확해집니다.
 
 **헤롱헤롱이 사라지는 시점**: `done`은 그 세션이 다시 `working`으로 바뀌기 전까지, 또는 **펫에 마우스를 올리기 전까지** 유지됩니다(둘 중 먼저 오는 쪽). 펫을 호버하면 `AgentStatusWatching.acknowledgeDone()`이 호출되어 그 시점 이전의 `done`은 전부 "확인함" 처리되고, 그 이후에 새로 `done`이 찍히면 다시 나타납니다 — Stop 이벤트 하나가 무한히 헤롱헤롱을 유지하지 않도록 하는 장치입니다.
+
+### Claude Desktop 소스 (`ClaudeDesktopStatusWatcher.swift`)
+
+CLI가 아니라 **Claude 데스크톱 앱**(`com.anthropic.claudefordesktop`)의 상태를 읽습니다. 이 앱은
+CLI와 달리 상태를 파일로 남기지 않아서(대화 상태는 Electron LevelDB/IndexedDB 안), 파일 폴링
+대신 **macOS 레벨 신호 두 가지**를 합쳐 4가지 상태를 만듭니다. 500ms마다 폴링하고, 우선순위는
+아래와 같습니다:
+
+1. Claude 앱 미실행 → **idle(잠듦)**
+2. 응답 생성 중 → **running(달리기)** — *신호 1*
+3. 방금 턴이 끝남(미확인) → **review(헤롱헤롱)** — *신호 1의 하강엣지 + 신호 2*
+4. 실행 중이나 **다른 앱이 앞에 있음**(백그라운드) → **waiting(얼음)**
+5. Claude가 앞에 있고 할 일 없음 → **idle(잠듦)**
+
+즉 "Dock에서 Claude 앱을 앞으로 꺼내 쓰는 동안"은 잠듦/달리기/헤롱헤롱으로, **다른 데로 넘어가
+Claude를 놔두면** 얼음으로 얼려둡니다.
+
+**신호 1 — "일하는 중인가" (렌더러 CPU, `ClaudeProcessActivity.swift`)**: Claude는 Electron 앱이라
+접근성(AX) API로 웹 콘텐츠(정지/전송 버튼, 스트리밍 표시)를 **읽을 수 없습니다** — 실제로 프로빙해보면
+`AXWindows == 0`이고 `AXManualAccessibility`를 강제해도 채팅 영역이 노출되지 않습니다. 그래서 대신
+Claude 프로세스 트리(메인 + 모든 헬퍼)의 CPU 사용량을 `proc_pid_rusage`로 측정합니다. idle은 ~0%,
+토큰 스트리밍 중에는 `Claude Helper (Renderer)`가 리페인트로 바빠져 25~100%까지 튑니다(코어 1개
+기준). 15% 이상이면 "생성 중"으로 보고, 스트리밍의 토큰 간 공백에 깜빡이지 않도록 몇 폴 동안
+latch합니다. (`ri_user_time`은 나노초가 아니라 **mach 틱 단위**라 timebase 변환이 필요 — Apple
+Silicon에서 41.67배 차이.) 별도 권한이 필요 없습니다.
+
+**신호 2 — "끝났나" (알림센터 DB, `NotificationCenterDB.swift`)**: Claude 앱이 완료 시 띄우는 macOS
+알림(설정 → 알림에서 켜야 함)을 `$DARWIN_USER_DIR/com.apple.notificationcenter/db2/db`(SQLite)에서
+읽습니다. `com.anthropic.claudefordesktop` 앱의 새 레코드가 뜨면 "완료"로 봅니다. 실측상 **짧은
+채팅 응답에는 지속 알림이 안 남고 긴/에이전트 작업에만** 남기 때문에, 이 신호는 신호 1의 CPU
+하강엣지(스트리밍이 멈춘 순간 = 턴 종료)를 **확정해주는 보조 신호**로 얹었습니다 — 둘 중 하나만
+떠도 헤롱헤롱이 됩니다. 이 DB를 읽으려면 앱에 **전체 디스크 접근(Full Disk Access)** 권한이 필요하고,
+권한이 없으면 알림 신호만 빠지고 나머지(CPU 기반 완료 감지 포함)는 그대로 동작합니다.
+
+**헤롱헤롱이 사라지는 시점**: Claude Code 소스와 동일하게 **펫에 마우스를 올리면**(`acknowledgeDone()`)
+확인 처리되어 사라지고, 새 턴이 시작되거나 안전 타임아웃(기본 5분)이 지나도 해제됩니다.
+
+> **왜 CPU 휴리스틱인가**: AX가 막히고 파일 신호도 없는 상황에서, 권한 없이 "생성 중"을 알 수
+> 있는 가장 견고한 방법이 렌더러 CPU였습니다. 대신 스크롤·레이아웃 같은 순간적 CPU도 잡힐 수
+> 있어(그래서 15% 임계값 + latch + "충분히 지속된 생성만 완료로 인정"으로 걸러냄), CLI 세션 파일
+> 기반의 Claude Code 소스만큼 딱 떨어지지는 않습니다. 정확도가 중요하면 Claude Code 소스를 쓰세요.
 
 ### Orca 소스 (`OrcaStatusWatcher.swift`)
 
