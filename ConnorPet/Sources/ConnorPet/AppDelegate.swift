@@ -6,10 +6,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var bubble: SpeechBubbleWindow?
 
-    // 사용자가 요청한 브리핑 범위: 최근 6시간, 최근 이용 순 5개 세션,
-    // 세션당 100자, 합계 500자 이내.
-    private let briefWindowHours: Double = 6
-    private let briefSessionLimit = 5
+    // 브리핑 범위는 2단이다.
+    //   1순위 — 최근 3시간 안에 쓴 세션. "지금 하던 일"이 이 안에 있다.
+    //   2순위 — 1순위가 하나도 없을 때만, 48시간까지 넓혀서 3개.
+    // 1순위에 상한 5를 둔 건 말풍선 글자 예산(세션당 100자 / 합계 500자)이
+    // 어차피 다섯 줄에서 끊기기 때문이다. 더 뽑아 봐야 버려진다.
+    private let briefPrimaryHours: Double = 3
+    private let briefPrimaryLimit = 5
+    private let briefFallbackHours: Double = 48
+    private let briefFallbackLimit = 3
     private let briefCharsPerSession = 100
     private let briefCharBudget = 500
     private var watcher: AgentStatusWatching?
@@ -119,17 +124,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// one was started to do. Reads Claude Code's own transcripts, so it covers
     /// both the CLI and the desktop app without either being running.
     private func briefingText() -> String? {
-        let briefs = SessionBriefReader.recent(
-            withinHours: briefWindowHours,
-            limit: briefSessionLimit,
+        var briefs = SessionBriefReader.recent(
+            withinHours: briefPrimaryHours,
+            limit: briefPrimaryLimit,
             perBriefChars: briefCharsPerSession
         )
+        var isFallback = false
+        if briefs.isEmpty {
+            briefs = SessionBriefReader.recent(
+                withinHours: briefFallbackHours,
+                limit: briefFallbackLimit,
+                perBriefChars: briefCharsPerSession
+            )
+            isFallback = true
+        }
         guard !briefs.isEmpty else {
-            return "최근 \(Int(briefWindowHours))시간 안에 작업한 게 없어. 좀 쉬었구나?"
+            return "최근 \(Int(briefFallbackHours))시간 안에 작업한 게 없어. 푹 쉬었구나?"
         }
 
         var lines: [String] = []
-        var used = 0
+        // 2순위로 내려왔다는 건 방금까지 한 일이 아니라는 뜻이라, 그렇다고 말해 준다.
+        // 안 그러면 이틀 전 작업을 지금 하던 일로 읽는다.
+        if isFallback {
+            lines.append("최근 \(Int(briefPrimaryHours))시간은 조용했어. 그 전엔 이런 걸 했어.")
+        }
+        // 접두 문장도 말풍선에 들어가므로 예산에 포함해서 센다.
+        var used = lines.reduce(0) { $0 + $1.count }
         for brief in briefs {
             let line = "· [\(brief.project)] \(brief.text)"
             // Budget is on the spoken text as a whole, so a long early brief
