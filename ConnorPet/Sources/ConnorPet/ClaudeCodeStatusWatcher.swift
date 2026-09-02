@@ -179,7 +179,8 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
 
     private func publish(entries: [AgentStatusEntry]) {
         let now = Date().timeIntervalSince1970 * 1000
-        let suppressed = suppressAcknowledgedDone(entries, acknowledgedAtMs: acknowledgedAtMs)
+        let decayed = decayStaleStates(entries, now: now)
+        let suppressed = suppressAcknowledgedDone(decayed, acknowledgedAtMs: acknowledgedAtMs)
         let result = agentStateAnimation(entries: suppressed, retainedCount: 0, now: now)
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
             FileHandle.standardError.write("[connor-pet] claude-code: \(entries.count) session(s) -> \(result.animation)\n".data(using: .utf8)!)

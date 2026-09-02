@@ -74,7 +74,25 @@ python3 scripts/install_claude_hooks.py --uninstall  # connor-pet이 추가한 �
 | `Stop` | 에이전트가 턴을 마치고 제어권을 사용자에게 돌려줌 | `done` → **헤롱헤롱** |
 | `SessionEnd` | 세션 종료 | 해당 항목 제거 |
 
-`scripts/claude_hook_status.py`는 각 훅이 stdin으로 받는 JSON(`session_id`/`cwd` 포함)을 읽어서 `~/.claude/connor-pet-status.json`을 Orca의 `last-status.json`과 같은 형태로 갱신합니다(동시에 여러 세션이 훅을 발생시켜도 안전하도록 `fcntl.flock`으로 잠그고 원자적으로 씀). `ClaudeCodeStatusWatcher`는 이 파일이 있으면 세션 파일의 busy/idle보다 우선해서 씁니다 — 훅을 설정 안 해도 앱은 그대로 동작하고(예전처럼 busy/idle만), 설정하면 자동으로 더 정확해집니다.
+#### 실패와 시간 감쇠
+
+훅으로 들어오는 상태 위에 두 가지가 더 얹혀 있습니다.
+
+**도구 실패 → `failed`(붉은 떨림).** PostToolUse 훅은 **도구가 실패하면 발화하지 않습니다**
+(실제 세션에서 확인). 그래서 실패는 훅 이벤트로는 절대 도달하지 않습니다. 대신 훅 페이로드에
+같이 오는 `transcript_path` 의 꼬리를 읽어, 가장 마지막 `tool_result` 의 `is_error` 를 봅니다
+(`last_tool_errored`). 마지막 것만 보는 이유는, 실패했다가 다시 시도해 성공한 도구는 사용자가
+볼 필요가 없고 마지막 도구가 실패한 채로 끝난 턴은 봐야 하기 때문입니다. 트랜스크립트는
+수십 MB 라서 끝에서 256KB 만 seek 해서 읽습니다 (31MB 파일 기준 1ms).
+
+**시간이 지나면 상태가 내려갑니다** — `failed` 30초 → `done`, `done` 5분 → 잠듦,
+`working` 15분 → 잠듦. 이 판단은 훅이 아니라 **읽는 쪽(`PetAnimationState.swift` 의
+`decayStaleStates`)** 이 합니다. 훅은 세션이 살아 있을 때만 발화하므로, 마지막 세션이 끝나면
+파일을 갱신할 주체가 없어져 시간 기반 판단을 쓸 수가 없습니다. 워처는 어차피 폴링하고 있으니
+거기서 판단하면 공짜이고, Orca 소스에도 똑같이 적용됩니다. `얼음(blocked/waiting)`은 사용자가
+직접 응답해야 하는 상태라 감쇠하지 않습니다.
+
+`scripts/claude_hook_status.py`는 각 훅이 stdin으로 받는 JSON(`session_id`/`cwd`/`transcript_path` 포함)을 읽어서 `~/.claude/connor-pet-status.json`을 Orca의 `last-status.json`과 같은 형태로 갱신합니다(동시에 여러 세션이 훅을 발생시켜도 안전하도록 `fcntl.flock`으로 잠그고 원자적으로 씀). `ClaudeCodeStatusWatcher`는 이 파일이 있으면 세션 파일의 busy/idle보다 우선해서 씁니다 — 훅을 설정 안 해도 앱은 그대로 동작하고(예전처럼 busy/idle만), 설정하면 자동으로 더 정확해집니다.
 
 **헤롱헤롱이 사라지는 시점**: `done`은 그 세션이 다시 `working`으로 바뀌기 전까지, 또는 **펫에 마우스를 올리기 전까지** 유지됩니다(둘 중 먼저 오는 쪽). 펫을 호버하면 `AgentStatusWatching.acknowledgeDone()`이 호출되어 그 시점 이전의 `done`은 전부 "확인함" 처리되고, 그 이후에 새로 `done`이 찍히면 다시 나타납니다 — Stop 이벤트 하나가 무한히 헤롱헤롱을 유지하지 않도록 하는 장치입니다.
 

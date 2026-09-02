@@ -59,6 +59,53 @@ struct AgentStatusEntry {
 /// Freshness gate, ported from `agent-status-types.ts` (`AGENT_STATUS_STALE_AFTER_MS`).
 let agentStatusStaleAfterMs: Double = 30 * 60 * 1000
 
+/// How long each transient state stays meaningful before it decays (see
+/// `decayStaleStates`). These live here, not in the hook script, because a
+/// hook only fires while a session is alive — once the last one exits nothing
+/// writes the file again, so anything time-based has to be judged by the
+/// reader. The watchers already poll, so they get this for free.
+enum AgentStatusDecay {
+    /// A failed tool is worth a glance, not a permanent mood.
+    static let failedMs: Double = 30 * 1000
+    /// "작업 끝" 이후 이만큼 지나면 잠든다 — 유휴 5분.
+    static let doneMs: Double = 5 * 60 * 1000
+    /// Normal work keeps firing hooks every few seconds; this much silence
+    /// means the session is wedged or died without a SessionEnd, so stop
+    /// showing it as busy.
+    static let workingMs: Double = 15 * 60 * 1000
+}
+
+/// Ages transient states down a step, so the pet settles by itself instead of
+/// holding whatever the last hook wrote forever.
+///
+///   failed  → done   (after 30s)
+///   done    → idle   (after 5m)
+///   working → idle   (after 15m)
+///
+/// Written as a pure transform over entries — same shape as
+/// `suppressAcknowledgedDone` — so both status sources share it and it can be
+/// reasoned about without a live file or a running session.
+func decayStaleStates(_ entries: [AgentStatusEntry], now: Double) -> [AgentStatusEntry] {
+    entries.map { entry in
+        let age = now - entry.updatedAt
+        let decayed: String
+        switch entry.state {
+        case "failed"  where age > AgentStatusDecay.failedMs + AgentStatusDecay.doneMs: decayed = "idle"
+        case "failed"  where age > AgentStatusDecay.failedMs:                           decayed = "done"
+        case "done"    where age > AgentStatusDecay.doneMs:                             decayed = "idle"
+        case "working" where age > AgentStatusDecay.workingMs:                          decayed = "idle"
+        default: return entry
+        }
+        return AgentStatusEntry(
+            paneKey: entry.paneKey,
+            state: decayed,
+            workingMode: entry.workingMode,
+            worktreeId: entry.worktreeId,
+            updatedAt: entry.updatedAt
+        )
+    }
+}
+
 func isEntryFresh(_ entry: AgentStatusEntry, now: Double, staleAfterMs: Double = agentStatusStaleAfterMs) -> Bool {
     now - entry.updatedAt <= staleAfterMs
 }
