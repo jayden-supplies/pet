@@ -37,6 +37,12 @@ struct AgentStatusEntry {
     let workingMode: String?
     let worktreeId: String?
     let updatedAt: Double // ms epoch
+    /// Path to this pane/session's Claude Code transcript JSONL, when known —
+    /// the only on-disk source of token usage (see TranscriptTokenReader).
+    /// Orca supplies it directly (`providerSession.transcriptPath`); the Claude
+    /// Code source resolves it by globbing on sessionId. `var` with a default
+    /// so existing call sites that don't set it keep compiling.
+    var transcriptPath: String? = nil
 }
 
 /// Freshness gate, ported from `agent-status-types.ts` (`AGENT_STATUS_STALE_AFTER_MS`).
@@ -53,6 +59,11 @@ struct AgentStateAnimationTrace {
 struct AgentStateAnimationResult {
     let animation: PetAnimationName
     let trace: [AgentStateAnimationTrace]
+    /// Aggregate token usage across all live panes/sessions, filled in by each
+    /// watcher's `publish` (0 when no transcript is readable). Drives the XP
+    /// bar + evolution — see XPModel. Defaulted so `agentStateAnimation`'s
+    /// return sites don't need to thread it through.
+    var totalTokens: Double = 0
 }
 
 /// Ported verbatim (in spirit) from `pet-agent-state.ts`'s `agentStateAnimation()`.

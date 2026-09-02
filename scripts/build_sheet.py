@@ -132,6 +132,43 @@ PETS = [
 ]
 
 
+# Evolved forms, built by the exact same pipeline and bundled only as ConnorPet
+# app resources (orca_bundle=False). The app swaps these in automatically as
+# token-usage XP rises — see AppDelegate.evolutionChains, which must stay in
+# sync with the (base → [stage1, stage2]) mapping implied here. Ditto has no
+# evolution, so it isn't listed. Eevee is given a single evolution (Vaporeon).
+_EVOLUTIONS = [
+    # (slug, dex_id, display_name)
+    ("croconaw", 159, "크로콘 (Croconaw)"),
+    ("feraligatr", 160, "장크로다일 (Feraligatr)"),
+    ("charmeleon", 5, "리자드 (Charmeleon)"),
+    ("charizard", 6, "리자몽 (Charizard)"),
+    ("wartortle", 8, "어니부기 (Wartortle)"),
+    ("blastoise", 9, "거북왕 (Blastoise)"),
+    ("graveler", 75, "데구리 (Graveler)"),
+    ("golem", 76, "딱구리 (Golem)"),
+    ("bayleef", 153, "베이리프 (Bayleef)"),
+    ("meganium", 154, "메가니움 (Meganium)"),
+    ("combusken", 256, "영뿔 (Combusken)"),
+    ("blaziken", 257, "번치코 (Blaziken)"),
+    ("vaporeon", 134, "샤미드 (Vaporeon)"),
+]
+for _slug, _dex, _name in _EVOLUTIONS:
+    PETS.append({
+        "slug": _slug,
+        "dex_id": _dex,
+        "out_dir_name": f"{_slug}.codex-pet",  # unused (orca_bundle=False)
+        "id": f"{_slug}-evolved",
+        "display_name": _name,
+        "orca_bundle": False,
+        "description": (
+            f"Custom connor-pet build (evolved form): {_name} reacts to live Orca/Claude Code "
+            "agent status, skinned as Pokémon status conditions — blocked/waiting=Freeze, "
+            "done=Infatuation, nothing=Sleep, working=running. Built from PokeAPI gen5 battle sprites."
+        ),
+    })
+
+
 def fetch(url, dest):
     if os.path.exists(dest):
         return dest
@@ -430,23 +467,27 @@ def build_pet(pet):
         "animations": manifest_animations
     }
 
-    # Orca-importable bundle (Settings → Experimental → Pet → Import).
-    out_dir = os.path.join(REPO_ROOT, pet["out_dir_name"])
-    os.makedirs(out_dir, exist_ok=True)
-    sheet.save(os.path.join(out_dir, "spritesheet.png"), optimize=True)
-    with open(os.path.join(out_dir, "pet.json"), "w") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    # Orca-importable bundle (Settings → Experimental → Pet → Import). Skipped
+    # for evolved forms (orca_bundle=False): those aren't user-selectable pets,
+    # the app just swaps them in as XP rises, so they'd only clutter the repo
+    # root with bundles no one imports.
+    if pet.get("orca_bundle", True):
+        out_dir = os.path.join(REPO_ROOT, pet["out_dir_name"])
+        os.makedirs(out_dir, exist_ok=True)
+        sheet.save(os.path.join(out_dir, "spritesheet.png"), optimize=True)
+        with open(os.path.join(out_dir, "pet.json"), "w") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    # ConnorPet app's bundled copy, picked from the menu-bar pet switcher —
-    # written from the same in-memory sheet/manifest so it can never drift
-    # from the Orca-importable bundle above.
+    # ConnorPet app's bundled copy, picked from the menu-bar pet switcher (or,
+    # for evolved forms, swapped in automatically) — written from the same
+    # in-memory sheet/manifest so it can never drift from any Orca bundle above.
     app_dir = os.path.join(APP_RESOURCES_DIR, pet["slug"])
     os.makedirs(app_dir, exist_ok=True)
     sheet.save(os.path.join(app_dir, "spritesheet.png"), optimize=True)
     with open(os.path.join(app_dir, "pet.json"), "w") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    print(f"wrote {out_dir}/ and {app_dir}/ ({sheet.size[0]}x{sheet.size[1]})")
+    print(f"wrote {app_dir}/ ({sheet.size[0]}x{sheet.size[1]})")
 
 
 def main():
