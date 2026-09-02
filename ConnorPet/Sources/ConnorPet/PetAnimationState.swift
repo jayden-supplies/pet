@@ -13,17 +13,22 @@ enum PetAnimationName: String, CaseIterable {
     case runningLeft = "running-left"
 
     /// Korean label for the right-click motion menu.
+    ///
+    /// 이름은 상태가 아니라 **눈에 보이는 동작**을 가리킨다. running 계열 세 개는
+    /// Orca 펫 포맷에서 물려받은 이름이라 rawValue 는 그대로 두지만, 실제로는
+    /// 달리는 그림이 아니다 — running 은 제자리에서 위아래로 흔들리는 서 있는
+    /// 자세이고, running-left/right 는 좌우를 바라보는 방향 전환이다.
     var koreanLabel: String {
         switch self {
         case .idle:         return "잠듦 (Zzz)"
-        case .running:      return "달리기"
+        case .running:      return "서있기"
         case .waiting:      return "얼음"
         case .review:       return "하트"
         case .jumping:      return "점프"
         case .waving:       return "말하기"
         case .failed:       return "실패"
-        case .runningRight: return "오른쪽으로 달리기"
-        case .runningLeft:  return "왼쪽으로 달리기"
+        case .runningRight: return "오른쪽보기"
+        case .runningLeft:  return "왼쪽보기"
         }
     }
 }
