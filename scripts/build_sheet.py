@@ -57,6 +57,54 @@ PETS = [
             "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
         ),
     },
+    {
+        "slug": "charmander",
+        "dex_id": 4,
+        "out_dir_name": "charmander.codex-pet",
+        "id": "charmander-pairi",
+        "display_name": "파이리 (Charmander)",
+        "description": (
+            "Custom connor-pet build: Charmander / 파이리 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
+    {
+        "slug": "squirtle",
+        "dex_id": 7,
+        "out_dir_name": "squirtle.codex-pet",
+        "id": "squirtle-kkobugi",
+        "display_name": "꼬부기 (Squirtle)",
+        "description": (
+            "Custom connor-pet build: Squirtle / 꼬부기 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
+    {
+        "slug": "geodude",
+        "dex_id": 74,
+        "out_dir_name": "geodude.codex-pet",
+        "id": "geodude-kkomadol",
+        "display_name": "꼬마돌 (Geodude)",
+        "description": (
+            "Custom connor-pet build: Geodude / 꼬마돌 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
+    {
+        "slug": "eevee",
+        "dex_id": 133,
+        "out_dir_name": "eevee.codex-pet",
+        "id": "eevee-ibui",
+        "display_name": "이브이 (Eevee)",
+        "description": (
+            "Custom connor-pet build: Eevee / 이브이 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
 ]
 
 
@@ -88,9 +136,14 @@ def autocrop(img):
     return img.crop(bbox) if bbox else img
 
 
-def scale_to_height(img, target_h):
+# Some Pokémon (e.g. Geodude with its fists spread wide) are noticeably wider
+# than tall, so scaling purely by height alone can blow the width past the
+# 200px frame and get clipped in paste_centered. Scale by whichever of
+# width/height is the tighter constraint instead, so every base sprite fits
+# inside (max_w, max_h) regardless of its aspect ratio.
+def scale_to_fit(img, max_w, max_h):
     w, h = img.size
-    scale = target_h / h
+    scale = min(max_w / w, max_h / h)
     return img.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.NEAREST)
 
 
@@ -239,9 +292,9 @@ def build_pet(pet):
     front_raw = load_frames(front_path)
     back_raw = load_frames(back_path)
 
-    front_base = [scale_to_height(autocrop(f), 150)
+    front_base = [scale_to_fit(autocrop(f), 170, 150)
                   for f in pick(front_raw, [0.0, 0.14, 0.28, 0.42, 0.5, 0.64, 0.78, 0.92])]
-    back_base = [scale_to_height(autocrop(f), 150)
+    back_base = [scale_to_fit(autocrop(f), 170, 150)
                  for f in pick(back_raw, [0.0, 0.25, 0.5, 0.75])]
 
     rows = {}
