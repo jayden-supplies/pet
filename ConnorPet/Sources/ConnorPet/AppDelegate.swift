@@ -26,6 +26,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let statusSourceDisplayNames = ["claude-code": "Claude Code", "orca": "Orca"]
     private var selectedStatusSource = availableStatusSources[0]
 
+    // Evolution chains keyed by the base pet the user picks: stage 1 → first
+    // evolution, stage 2 → second (see XPModel.stage). The evolved forms are
+    // bundled just like the base pets (scripts/build_sheet.py builds them from
+    // each next PokéDex form) but aren't offered in the picker — evolution is
+    // automatic, driven by token-usage XP. Ditto has no evolution.
+    private static let evolutionChains: [String: [String]] = [
+        "totodile": ["croconaw", "feraligatr"],
+        "charmander": ["charmeleon", "charizard"],
+        "squirtle": ["wartortle", "blastoise"],
+        "geodude": ["graveler", "golem"],
+        "chikorita": ["bayleef", "meganium"],
+        "torchic": ["combusken", "blaziken"],
+        "eevee": ["vaporeon"],
+        "ditto": [],
+    ]
+
+    // Whether the XP bar is always shown vs. only on hover (menu toggle).
+    private var barAlwaysVisible = true
+    // Live XP state, so re-selecting a pet re-derives the right evolved form.
+    private var currentStage = 0
+    private var currentPercent: Double = 0
+    private var currentDisplaySlug = ""
+    private var sheetCache: [String: SpriteSheet] = [:]
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu-bar utility, no Dock icon
 
@@ -45,6 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let size = petSize
+        // The window is one square (the sprite) plus a short strip beneath it
+        // for the XP bar, so the pet still renders at `size` while the bar sits
+        // below it (see PetView.barAreaHeight).
+        let viewHeight = size + PetView.barAreaHeight
         // Why: NSScreen.main resolves from the key window, which doesn't exist
         // yet during applicationDidFinishLaunching — it can silently return an
         // unexpected screen (observed: a stale/secondary one with a negative
@@ -53,11 +81,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let screenFrame = NSScreen.screens.first?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let defaultOrigin = CGPoint(x: screenFrame.maxX - size - 48, y: screenFrame.minY + 48)
         let origin = Self.savedOrigin(fallback: defaultOrigin)
-        let contentRect = NSRect(x: origin.x, y: origin.y, width: size, height: size)
+        let contentRect = NSRect(x: origin.x, y: origin.y, width: size, height: viewHeight)
+
+        currentDisplaySlug = selectedPetSlug
+        sheetCache[selectedPetSlug] = sheet
 
         let win = PetWindow(contentRect: contentRect)
         let view = PetView(spriteSheet: sheet)
-        view.frame = NSRect(x: 0, y: 0, width: size, height: size)
+        view.frame = NSRect(x: 0, y: 0, width: size, height: viewHeight)
+        barAlwaysVisible = Self.savedBarAlwaysVisible(fallback: true)
+        view.setBarAlwaysVisible(barAlwaysVisible)
         view.onRequestWindowMove = { [weak win] newOrigin in
             win?.setFrameOrigin(newOrigin)
             Self.saveOrigin(newOrigin)
@@ -106,18 +139,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(menuItem)
         }
         menu.addItem(.separator())
+        // When on, the XP bar is always visible; when off, it only appears while
+        // hovering the pet. Default on (see savedBarAlwaysVisible).
+        let barToggle = NSMenuItem(title: "경험치 바 항상 표시", action: #selector(toggleBarAlwaysVisible), keyEquivalent: "")
+        barToggle.target = self
+        barToggle.state = barAlwaysVisible ? .on : .off
+        menu.addItem(barToggle)
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
         statusItem?.menu = menu
     }
 
+    @objc private func toggleBarAlwaysVisible() {
+        barAlwaysVisible.toggle()
+        petView?.setBarAlwaysVisible(barAlwaysVisible)
+        Self.saveBarAlwaysVisible(barAlwaysVisible)
+        rebuildMenu()
+    }
+
     @objc private func selectPet(_ sender: NSMenuItem) {
         guard let slug = sender.representedObject as? String, slug != selectedPetSlug else { return }
-        guard let sheet = try? Self.loadSpriteSheet(slug: slug) else { return }
         selectedPetSlug = slug
-        petView?.setSpriteSheet(sheet)
         Self.savePetSlug(slug)
+        // Re-derive the shown form from the new base + current XP stage (so
+        // picking a pet while already "leveled up" shows its evolved form).
+        refreshDisplayedPet()
         rebuildMenu()
     }
 
@@ -135,10 +183,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher?.stop()
         let newWatcher: AgentStatusWatching = (source == "orca") ? OrcaStatusWatcher() : ClaudeCodeStatusWatcher()
         newWatcher.onUpdate = { [weak self] result in
-            self?.petView?.setBaseAnimation(result.animation)
+            self?.applyUpdate(result)
         }
         newWatcher.start()
         watcher = newWatcher
+    }
+
+    // MARK: - Live update: animation + XP bar + evolution
+
+    private func applyUpdate(_ result: AgentStateAnimationResult) {
+        petView?.setBaseAnimation(result.animation)
+
+        currentPercent = XPModel.percent(tokens: result.totalTokens)
+        let stage = XPModel.stage(percent: currentPercent)
+        petView?.setProgress(percent: currentPercent, stage: stage)
+
+        if stage != currentStage {
+            currentStage = stage
+            refreshDisplayedPet()
+        }
+    }
+
+    /// Picks the sprite to show from the user's base pet + current evolution
+    /// stage, swapping it in only when it actually changes (so the animation
+    /// isn't restarted every poll).
+    private func refreshDisplayedPet() {
+        let slug = displaySlug(base: selectedPetSlug, stage: currentStage)
+        guard slug != currentDisplaySlug, let sheet = cachedSheet(slug: slug) else { return }
+        currentDisplaySlug = slug
+        petView?.setSpriteSheet(sheet)
+    }
+
+    private func displaySlug(base: String, stage: Int) -> String {
+        guard stage > 0, let chain = Self.evolutionChains[base], !chain.isEmpty else { return base }
+        let index = min(stage, chain.count) - 1
+        return chain[index]
+    }
+
+    private func cachedSheet(slug: String) -> SpriteSheet? {
+        if let cached = sheetCache[slug] { return cached }
+        guard let sheet = try? Self.loadSpriteSheet(slug: slug) else { return nil }
+        sheetCache[slug] = sheet
+        return sheet
     }
 
     private static func loadSpriteSheet(slug: String) throws -> SpriteSheet {
@@ -232,6 +318,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return fallback
         }
         return saved
+    }
+
+    // MARK: - XP bar visibility persistence
+
+    private static let barAlwaysVisibleDefaultsKey = "xpBarAlwaysVisible"
+
+    private static func saveBarAlwaysVisible(_ always: Bool) {
+        UserDefaults.standard.set(always, forKey: barAlwaysVisibleDefaultsKey)
+    }
+
+    // Defaults to `fallback` (true — bar always shown) when nothing saved yet.
+    private static func savedBarAlwaysVisible(fallback: Bool) -> Bool {
+        guard UserDefaults.standard.object(forKey: barAlwaysVisibleDefaultsKey) != nil else { return fallback }
+        return UserDefaults.standard.bool(forKey: barAlwaysVisibleDefaultsKey)
     }
 
     // MARK: - Window position persistence
