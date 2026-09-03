@@ -247,10 +247,10 @@ swift run
 
 1. GitHub 저장소의 **Actions** 탭 → **Build Pet DMG** 워크플로우 선택
 2. **Run workflow** 클릭 → `pet` 드롭다운에서 원하는 base pet(리아코/메타몽/파이리/꼬부기/꼬마돌/이브이/치코리타/아차모/토게피 중 하나, "한글 이름 (영문)" 표기) 선택 → 실행
-3. macOS 러너가 `AppDelegate.swift`의 `availablePetSlugs`를 (커밋하지 않고, 빌드 시점에만) 고른 펫 하나로 임시 치환한 뒤 `swift build -c release`로 빌드하고, `<Pet>.app`으로 번들링해서 `<Pet>.dmg`를 만듭니다. 진화형 스프라이트는 리소스 번들(`Resources/pets`) 전체가 항상 함께 들어가므로 별도 처리 없이도 진화가 정상 동작합니다.
+3. macOS 러너가 `AppDelegate.swift`의 `availablePetSlugs`를 (커밋하지 않고, 빌드 시점에만) 고른 펫 하나로 임시 치환한 뒤 `swift build -c release`로 빌드하고, `<Pet>-pet.app`으로 번들링해서 `<Pet>-pet.dmg`를 만듭니다. 진화형 스프라이트는 리소스 번들(`Resources/pets`) 전체가 항상 함께 들어가므로 별도 처리 없이도 진화가 정상 동작합니다. 앱 아이콘은 고른 펫의 스프라이트시트에서 원색 그대로인 "running" 프레임을 잘라 `.icns`로 구워 넣습니다(idle 프레임은 이 저장소의 리스킨 규칙상 "잠듦" 상태로 탈색되어 있어서 제외).
 4. 실행이 끝나면 해당 워크플로우 실행 화면의 **Artifacts**에서 `<Pet>-pet-dmg`를 다운로드
 
-코드서명/공증(notarization)은 하지 않으므로, dmg를 마운트해서 처음 실행할 때 macOS Gatekeeper 경고가 뜰 수 있습니다 — 우클릭(Control-클릭) → "열기"로 열면 됩니다.
+코드서명/공증(notarization)은 하지 않고 ad-hoc 서명만 합니다(`codesign --sign -`). 서명 없이 그대로 두면 손으로 조립한 `.app` 번들이 quarantine 플래그와 맞물려 macOS가 "손상되었기 때문에 열 수 없음"이라며 아예 실행을 거부하는 문제가 있어서, 최소한의 ad-hoc 서명으로 이를 막았습니다. 다만 Apple Developer ID 서명은 아니라서 처음 실행할 때 "확인되지 않은 개발자" Gatekeeper 경고는 여전히 뜰 수 있습니다 — 이때는 dmg를 마운트한 뒤 우클릭(Control-클릭) → "열기"로 열면 됩니다.
 
 ## 테스트하기 (실제 에이전트 없이)
 
