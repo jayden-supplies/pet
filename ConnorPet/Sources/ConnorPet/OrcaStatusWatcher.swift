@@ -31,13 +31,17 @@ func parseAgentStatusEntries(from data: Data) -> [AgentStatusEntry] {
         let workingMode = stateSource["workingMode"] as? String
         let worktreeId = entry["worktreeId"] as? String
         let receivedAt = (entry["receivedAt"] as? NSNumber)?.doubleValue
+        // Orca hands us the transcript path outright, so token usage needs no
+        // sessionId→path guessing on this source (unlike ClaudeCodeStatusWatcher).
+        let transcriptPath = (entry["providerSession"] as? [String: Any])?["transcriptPath"] as? String
 
         result.append(AgentStatusEntry(
             paneKey: paneKey,
             state: state,
             workingMode: workingMode,
             worktreeId: worktreeId,
-            updatedAt: receivedAt ?? (Date().timeIntervalSince1970 * 1000)
+            updatedAt: receivedAt ?? (Date().timeIntervalSince1970 * 1000),
+            transcriptPath: transcriptPath
         ))
     }
     return result
@@ -63,6 +67,8 @@ final class OrcaStatusWatcher: AgentStatusWatching {
 
     // ms epoch of the last acknowledgeDone() call — see suppressAcknowledgedDone.
     private var acknowledgedAtMs: Double = 0
+
+    private let tokenReader = TranscriptTokenReader()
 
     var onUpdate: ((AgentStateAnimationResult) -> Void)?
 
@@ -112,10 +118,12 @@ final class OrcaStatusWatcher: AgentStatusWatching {
 
     private func publish(entries: [AgentStatusEntry]) {
         let now = Date().timeIntervalSince1970 * 1000
-        let suppressed = suppressAcknowledgedDone(entries, acknowledgedAtMs: acknowledgedAtMs)
-        let result = agentStateAnimation(entries: suppressed, retainedCount: retainedCount, now: now)
+        let decayed = decayStaleStates(entries, now: now)
+        let suppressed = suppressAcknowledgedDone(decayed, acknowledgedAtMs: acknowledgedAtMs)
+        var result = agentStateAnimation(entries: suppressed, retainedCount: retainedCount, now: now)
+        result.gainedTokens = tokenReader.accrued(for: entries)
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
-            FileHandle.standardError.write("[connor-pet] \(entries.count) entr(y/ies) -> \(result.animation)\n".data(using: .utf8)!)
+            FileHandle.standardError.write("[connor-pet] \(entries.count) entr(y/ies) -> \(result.animation), +\(Int(result.gainedTokens)) tokens\n".data(using: .utf8)!)
             for line in result.trace { FileHandle.standardError.write("  \(line.line)\n".data(using: .utf8)!) }
         }
         DispatchQueue.main.async { [weak self] in

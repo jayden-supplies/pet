@@ -1,0 +1,161 @@
+name: Build Pet DMG
+
+# 메뉴바 펫 앱(ConnorPet/)을 base pet 하나만 골라서 .dmg로 빌드하는 수동 파이프라인.
+# ConnorPet은 SwiftPM 실행 파일(swift build -c release)로만 빌드되고, 지금까지 .app
+# 번들/dmg 생성 과정이 없었어서 이 워크플로우에서 그 자리를 대신 채운다.
+on:
+  workflow_dispatch:
+    inputs:
+      pet:
+        description: '빌드할 base pet (진화형은 자동으로 함께 포함됨)'
+        required: true
+        type: choice
+        default: '리아코 (Totodile)'
+        options:
+          - '리아코 (Totodile)'
+          - '메타몽 (Ditto)'
+          - '파이리 (Charmander)'
+          - '꼬부기 (Squirtle)'
+          - '꼬마돌 (Geodude)'
+          - '이브이 (Eevee)'
+          - '치코리타 (Chikorita)'
+          - '아차모 (Torchic)'
+          - '토게피 (Togepi)'
+
+permissions:
+  contents: read
+
+jobs:
+  build-dmg:
+    runs-on: macos-latest
+    env:
+      PET_LABEL: ${{ inputs.pet }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve pet metadata
+        id: pet
+        run: |
+          # 드롭다운 라벨 "리아코 (Totodile)"의 괄호 안 영문 slug만 뽑아 소문자로.
+          SLUG="$(printf '%s' "$PET_LABEL" | sed -E 's/.*\(([^)]+)\).*/\1/' | tr '[:upper:]' '[:lower:]')"
+          # totodile -> Totodile-pet (.app/.dmg 이름, CFBundleName, 아티팩트 이름에 사용)
+          NAME="$(printf '%s' "${SLUG:0:1}" | tr '[:lower:]' '[:upper:]')${SLUG:1}-pet"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Patch availablePetSlugs to the selected pet only
+        env:
+          PET_SLUG: ${{ steps.pet.outputs.slug }}
+        run: |
+          # 저장소 원본 파일이 아니라 이 러너의 체크아웃 사본만 고치는 것이라 커밋되지 않음.
+          # Resources/pets 전체가 리소스 번들로 그대로 복사되므로(Package.swift 참고),
+          # 선택한 base pet의 진화형 스프라이트도 이 시점에 이미 함께 포함되어 있다 —
+          # 별도로 진화형 리소스를 추려 넣을 필요가 없다.
+          sed -i '' "s/private static let availablePetSlugs = \[.*\]/private static let availablePetSlugs = [\"$PET_SLUG\"]/" ConnorPet/Sources/ConnorPet/AppDelegate.swift
+          grep -n 'availablePetSlugs =' ConnorPet/Sources/ConnorPet/AppDelegate.swift
+
+      - name: Build (release)
+        run: |
+          cd ConnorPet
+          swift build -c release
+
+      - name: Generate app icon from the pet's sprite
+        env:
+          PET_SLUG: ${{ steps.pet.outputs.slug }}
+        run: |
+          cd ConnorPet
+          python3 -m pip install --quiet --break-system-packages pillow
+          # pet.json 기준 frame은 200x200, "running" 애니메이션은 row 7(모든 펫 공통)로
+          # 유일하게 상태이상 틴트(얼음/헤롱헤롱/잠듦 채도저하)가 안 입혀진 원색 그대로의
+          # 로우다 — idle(row 0)을 쓰면 잠듦 상태의 탈색된 스프라이트가 아이콘이 된다.
+          python3 -c "import sys; from PIL import Image; Image.open(sys.argv[1]).convert('RGBA').crop((0, 1400, 200, 1600)).save('/tmp/icon_master.png')" "Sources/ConnorPet/Resources/pets/${PET_SLUG}/spritesheet.png"
+
+          mkdir -p AppIcon.iconset
+          for size in 16 32 128 256 512; do
+            double=$((size * 2))
+            sips -z "$size" "$size" /tmp/icon_master.png --out "AppIcon.iconset/icon_${size}x${size}.png" >/dev/null
+            sips -z "$double" "$double" /tmp/icon_master.png --out "AppIcon.iconset/icon_${size}x${size}@2x.png" >/dev/null
+          done
+          iconutil -c icns AppIcon.iconset -o AppIcon.icns
+
+      - name: Assemble .app bundle
+        env:
+          PET_SLUG: ${{ steps.pet.outputs.slug }}
+          PET_NAME: ${{ steps.pet.outputs.name }}
+        run: |
+          cd ConnorPet
+          APP="$PET_NAME.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp .build/release/ConnorPet "$APP/Contents/MacOS/ConnorPet"
+          # AppDelegate.swift의 resourceBundle이 Bundle.main.resourceURL(=이 경로)을
+          # 먼저 찾아보도록 되어 있다 — SwiftPM 기본 accessor(Bundle.module)는 .app
+          # 번들 루트에서 찾는데, 거기 두면 codesign이 "unsealed contents present in
+          # the bundle root"로 서명 자체를 거부해서 quarantine 시 "손상됨" 오류가 남.
+          cp -R .build/release/ConnorPet_ConnorPet.bundle "$APP/Contents/Resources/ConnorPet_ConnorPet.bundle"
+          cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>ConnorPet</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.connor.$PET_SLUG-pet</string>
+              <key>CFBundleName</key>
+              <string>$PET_NAME</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>LSUIElement</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # swift build가 실행 파일 자체에 남긴 linker-signed ad-hoc 서명은 이렇게
+          # 손으로 조립한 번들 구조(Info.plist/Resources)를 봉인하지 못해서 무효가 된다
+          # (codesign -dv로 확인하면 "code has no resources but signature indicates
+          # they must be present"). 그 상태로 배포하면 인터넷에서 받은 파일에 자동으로
+          # 붙는 com.apple.quarantine 플래그와 맞물려 macOS가 "손상되었기 때문에 열 수
+          # 없습니다"라며 아예 실행을 거부한다(휴지통으로 보내라는 안내까지 뜸).
+          # 번들 전체를 다시 ad-hoc 서명해서 리소스까지 올바르게 봉인하면 이 오류가
+          # 사라지고, 서명 자체가 Apple Developer ID는 아니라서(공증 스코프 밖) 정상적인
+          # "확인되지 않은 개발자" Gatekeeper 경고로 바뀐다 — 이건 우클릭 → 열기로 넘어갈
+          # 수 있는 정상 동작이다.
+          codesign --force --deep --sign - "$APP"
+
+      - name: Create dmg
+        env:
+          PET_NAME: ${{ steps.pet.outputs.name }}
+        run: |
+          cd ConnorPet
+          hdiutil create -volname "$PET_NAME" -srcfolder "$PET_NAME.app" -ov -format UDZO "$PET_NAME.dmg"
+
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pet.outputs.name }}-dmg
+          path: ConnorPet/${{ steps.pet.outputs.name }}.dmg
+
+      - name: Job summary
+        env:
+          PET_NAME: ${{ steps.pet.outputs.name }}
+        run: |
+          {
+            echo "## $PET_NAME.dmg"
+            echo ""
+            echo "코드서명/공증(notarization) 없이 ad-hoc 서명만 했습니다. 다운로드한 파일은 quarantine 플래그가 붙어 있어서, 그대로 더블클릭하면 macOS(특히 Apple Silicon)가 아무 안내도 없이 실행을 막고 앱을 휴지통으로 옮겨버립니다(우클릭 → 열기로도 안 열림). 다음을 터미널에서 실행한 뒤 여세요:"
+            echo ""
+            echo '```sh'
+            echo "xattr -d com.apple.quarantine /path/to/$PET_NAME.app"
+            echo "open /path/to/$PET_NAME.app"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
