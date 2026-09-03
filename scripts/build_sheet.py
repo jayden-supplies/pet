@@ -456,16 +456,37 @@ def draw_hearts(frame, t):
 
 
 def draw_zzz(frame, t):
-    """Drifting "Zzz" for the Sleep skin, timed like the CSS zzzFloat keyframes."""
-    overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
+    """Drifting "Zzz" for the Sleep skin, timed like the CSS zzzFloat keyframes.
+
+    예전에는 시스템 폰트로 "Zzz" 를 그렸다. 도트 그림 옆에 벡터 글꼴이 얹혀 이질적이라
+    도트로 그린 이펙트 스프라이트로 바꿨다. 파일이 없으면 예전 방식으로 돌아간다 —
+    이펙트가 없다고 빌드가 실패하면 안 된다.
+
+    크기와 이동 폭은 프레임 크기에 비례한다. 예전에는 절대 픽셀이라 400px 프레임을
+    쓰는 펫(파이리·꼬부기)에서 Zzz 만 절반 크기로 보였다.
+    """
+    scale = FRAME / FRAME_DEFAULT
     alphas = [0, 210, 130, 0]
     dx = [0, 4, 12, 20]
     dy = [8, -2, -14, -26]
-    font = _load_font(22)
-    x = frame.size[0] * 0.62 + lerp_key(dx, t)
-    y = frame.size[1] * 0.10 + lerp_key(dy, t)
-    draw.text((x, y), "Zzz", font=font, fill=(210, 230, 255, int(lerp_key(alphas, t))))
+    alpha = int(lerp_key(alphas, t))
+    x = frame.size[0] * 0.62 + lerp_key(dx, t) * scale
+    y = frame.size[1] * 0.10 + lerp_key(dy, t) * scale
+
+    sprite = load_effect("zzz.png")
+    overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+    if sprite is not None:
+        w = max(1, round(46 * scale))
+        h = max(1, round(sprite.height * w / sprite.width))
+        sprite = sprite.resize((w, h), Image.NEAREST)
+        # 프레임마다 투명도가 달라야 떠오르며 사라지는 연출이 된다.
+        sa = sprite.split()[-1].point(lambda v: v * alpha // 255)
+        sprite.putalpha(sa)
+        overlay.alpha_composite(sprite, (round(x), round(y)))
+    else:
+        draw = ImageDraw.Draw(overlay)
+        draw.text((x, y), "Zzz", font=_load_font(round(22 * scale)),
+                  fill=(210, 230, 255, alpha))
     return Image.alpha_composite(frame, overlay)
 
 
