@@ -50,6 +50,6 @@ UI/동작을 변경했으면 반드시 `swift run`으로 실제 앱을 띄워서
   ```
   README와 실제 동작이 어긋나는 부분(예: 코드에서 바뀐 아이콘·플래그·경로가 README에 옛날 그대로 남아있는 경우)을 발견하면 관련 작업이 아니어도 그 자리에서 같이 고칠 것.
 - **새 포켓몬(펫) 추가 시 GitHub Actions 목록도 같이 갱신**: `AppDelegate.swift`의 `availablePetSlugs`에 슬러그를 추가하면(`scripts/build_sheet.py`의 `PETS`도 함께), `.github/workflows/build-pet-dmg.yml`의 `workflow_dispatch.inputs.pet.options`에도 같은 펫을 `"<한글 이름> (<영문 slug 대문자화>)"` 형식(각 펫 `pet.json`의 `displayName`과 동일한 표기)으로 추가할 것. 둘이 어긋나면 Actions에서 그 펫을 선택할 방법이 없어진다 — 실제로 토게피 추가 때 이 목록을 빠뜨렸던 적이 있음.
-- **브랜치 전략 없음, 항상 main에 push**: 이 저장소는 기능 브랜치/PR 없이 `main` 하나로만 운영한다. 별도 요청이 없는 한 작업이 끝나면 변경사항을 커밋하고 `git push origin main`까지 완료한 뒤 마칠 것.
+- **브랜치 전략: GitHub Flow**: `main`은 항상 배포 가능한 상태로 유지하고, 모든 작업은 `main`에서 분기한 **기능 브랜치**에서 한다. 브랜치 이름은 `feature/<간단한-설명>`(kebab-case) 형식으로 짓는다 (예: `feature/lan-multiplayer-battle`). 작업이 끝나면 그 기능 브랜치를 push하고 `main`으로 향하는 PR을 열어 리뷰 후 병합한다. `main`에 직접 push하지 않는다.
 - **커밋 메시지는 항상 한글로 작성**: 제목/본문 모두 한글로 쓸 것 (`Co-Authored-By:` 트레일러 등 고정 형식 줄은 예외).
-- **`main` 브랜치는 보호 룰셋이 없음**: write 권한이 있는 협업자는 PR/승인 없이 `main`에 직접 push 가능하고, force-push/브랜치 삭제도 막혀있지 않다. 협업자 현황 확인 명령: `gh api repos/pet-egg/pet/collaborators --jq '.[] | {login, permissions}'`. 룰셋 현황 확인 명령: `gh api repos/pet-egg/pet/rulesets`.
+- **`main` 브랜치는 보호 룰셋이 없음**: 룰셋상으로는 write 권한이 있는 협업자가 PR/승인 없이 `main`에 직접 push할 수 있고 force-push/브랜치 삭제도 막혀있지 않지만, **위 브랜치 전략(GitHub Flow)에 따라 직접 push하지 말고 기능 브랜치 + PR로 진행할 것**. 협업자 현황 확인 명령: `gh api repos/pet-egg/pet/collaborators --jq '.[] | {login, permissions}'`. 룰셋 현황 확인 명령: `gh api repos/pet-egg/pet/rulesets`.
