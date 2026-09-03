@@ -558,10 +558,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let slug = displaySlug(base: selectedPetSlug, stage: currentStage)
         guard slug != currentDisplaySlug, let sheet = cachedSheet(slug: slug) else { return }
         currentDisplaySlug = slug
-        if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
-            let t = Int(petTokens[selectedPetSlug] ?? 0)
-            FileHandle.standardError.write("[connor-pet] 표시 \(slug)  (기준 \(selectedPetSlug), 단계 \(currentStage), XP \(t))\n".data(using: .utf8)!)
-        }
 
         // 프레임 크기가 다른 펫으로 바뀌면 창도 같이 커지거나 작아져야 한다. 중심을
         // 유지해서 바꾸면 펫이 제자리에 있는 것처럼 보인다. 여기가 시트를 갈아 끼우는
@@ -580,6 +576,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         petView?.setSpriteSheet(sheet)
         loadSkillEffect(for: sheet)
+        if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
+            let t = Int(petTokens[selectedPetSlug] ?? 0)
+            let ww = Int(self.window?.frame.width ?? 0)
+            FileHandle.standardError.write("[connor-pet] 표시 \(slug)  (기준 \(selectedPetSlug), 단계 \(currentStage), XP \(t), 창 \(ww)pt)\n".data(using: .utf8)!)
+        }
     }
 
     private func displaySlug(base: String, stage: Int) -> String {

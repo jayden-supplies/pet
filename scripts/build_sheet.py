@@ -35,12 +35,12 @@ FRAME_DEFAULT = 200
 # 펫의 2배 크기로 보여 주기 위해서다. 창만 2배로 키우면 200px 소스를 1.8배로 늘려
 # 그리게 돼 도트가 뭉개지므로, 스프라이트를 정수배로 두 배(4배 → 8배 확대) 다시 굽고
 # 프레임도 같이 넓힌다.
-# 파이리·꼬부기 계열은 다른 펫의 두 배 크기다. 진화형도 같이 키우지 않으면 진화하는
-# 순간 펫이 절반으로 줄어든다. 진화형은 원본 도트가 더 크기 때문에 같은 화면 크기를
-# 내려면 프레임이 더 넓어야 한다(480).
+# 진화하면 덩치가 커진다. 기본형은 다른 펫과 같은 크기(프레임 200)이고, 진화형만
+# 프레임을 넓혀 화면상 두 배쯤으로 보이게 한다. 진화형은 원본 도트가 더 크기 때문에
+# 같은 화면 크기를 내려면 프레임이 더 넓어야 한다(480).
 FRAME_BY_PET = {
-    "charmander": 400, "charmeleon": 480, "charizard": 480,
-    "squirtle": 400, "wartortle": 480, "blastoise": 480,
+    "charmeleon": 480, "charizard": 480,
+    "wartortle": 480, "blastoise": 480,
 }
 FRAME = FRAME_DEFAULT
 SPRITE_TARGET = SPRITE_TARGET_DEFAULT if False else (170, 150)
@@ -52,8 +52,8 @@ SPRITE_TARGET_DEFAULT = (170, 150)
 # 원하는 배율이 나오도록 목표 크기를 잡아 뒀다 (파이리 8배 / 리자드 6배 / 리자몽 4배,
 # 꼬부기 8배 / 어니부기 6배 / 거북왕 5배).
 SPRITE_TARGET_BY_PET = {
-    "charmander": (340, 345), "charmeleon": (400, 340), "charizard": (370, 380),
-    "squirtle": (330, 345), "wartortle": (360, 342), "blastoise": (360, 340),
+    "charmeleon": (400, 340), "charizard": (370, 380),
+    "wartortle": (360, 342), "blastoise": (360, 340),
 }
 ROWS_ORDER = [
     "idle", "running-right", "running-left", "waving",
