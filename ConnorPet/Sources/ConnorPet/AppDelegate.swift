@@ -21,6 +21,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let briefCharBudget = 500
     private var watcher: AgentStatusWatching?
 
+    // LAN battle: discovers other running copies on the same Wi-Fi and runs the
+    // challenge/accept handshake. Peers drive the "대전" submenu; an incoming
+    // challenge pops an accept/decline alert; an agreed battle opens a window.
+    private var battleService: BattleService?
+    private var battlePeers: [BattlePeer] = []
+    private var battleWindow: BattleWindow?
+    private var pendingChallengeAlert = false
+
     // Orca's own default (PET_SIZE_DEFAULT=180) still read as "big" next to the
     // small nav-badge-style pet icon the user is comparing against — sized
     // near Orca's PET_SIZE_MIN=60 floor instead.
@@ -105,6 +113,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             fallback: Self.availablePetSlugs.first ?? "totodile",
             validSlugs: Set(petDisplayNames.keys)
         )
+        // Test hook: force a specific pet (two instances share one UserDefaults
+        // domain, so this lets a headless battle run mismatched characters).
+        if let forced = ProcessInfo.processInfo.environment["CONNORPET_PET"],
+           petDisplayNames.keys.contains(forced) {
+            selectedPetSlug = forced
+        }
 
         guard let sheet = try? Self.loadSpriteSheet(slug: selectedPetSlug) else {
             fatalError("connor-pet: bundled pet '\(selectedPetSlug)' not found")
@@ -191,6 +205,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
         startWatcher(for: selectedStatusSource)
 
+        startBattleService()
+
         // 첫 클릭이 원문 발췌로 떨어지지 않도록, 뜨자마자 한 번 요약해 둔다.
         // 클릭과 똑같은 선택 로직을 쓴다.
         BriefingSummarizer.refresh(briefs: currentBriefs().briefs,
@@ -227,6 +243,125 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    // MARK: - LAN battle wiring
+
+    private func startBattleService() {
+        let service = BattleService(petSlug: selectedPetSlug)
+        service.onPeersChanged = { [weak self] peers in
+            self?.battlePeers = peers
+            self?.rebuildMenu()
+            self?.maybeAutoChallenge()
+        }
+        service.onIncomingChallenge = { [weak self] fromName, respond in
+            self?.presentIncomingChallenge(fromName: fromName, respond: respond)
+        }
+        service.onBattleStart = { [weak self] myRole, outcome, oppName, oppPet in
+            self?.presentBattle(myRole: myRole, outcome: outcome, opponentName: oppName, opponentPet: oppPet)
+        }
+        service.start()
+        battleService = service
+    }
+
+    // Test hook: when CONNORPET_BATTLE_AUTOCHALLENGE is set, challenge the first
+    // discovered peer automatically (drives two real instances without clicks).
+    private func maybeAutoChallenge() {
+        guard ProcessInfo.processInfo.environment["CONNORPET_BATTLE_AUTOCHALLENGE"] != nil,
+              battleWindow == nil, let peer = battlePeers.first, let service = battleService else { return }
+        service.challenge(peer) { _ in }
+    }
+
+    @objc private func challengePeer(_ sender: NSMenuItem) {
+        guard let peerID = sender.representedObject as? String,
+              let peer = battlePeers.first(where: { $0.id == peerID }),
+              let service = battleService else { return }
+        // Avoid stacking battles.
+        guard battleWindow == nil else { return }
+        service.challenge(peer) { [weak self] result in
+            switch result {
+            case .accepted:
+                break // onBattleStart opens the window
+            case .declined:
+                self?.showInfo(title: "대전 거절됨", text: "\(peer.name)님이 대전을 거절했어요.")
+            case .failed:
+                self?.showInfo(title: "대전 실패", text: "\(peer.name)님과 연결하지 못했어요.")
+            }
+        }
+    }
+
+    private func presentIncomingChallenge(fromName: String, respond: @escaping (Bool) -> Void) {
+        // Test hook: auto-accept without a modal (used to drive two real
+        // instances headlessly — see README dev notes).
+        if ProcessInfo.processInfo.environment["CONNORPET_BATTLE_AUTOACCEPT"] != nil {
+            respond(battleWindow == nil)
+            return
+        }
+        // If we're already in / setting up a battle, auto-decline.
+        guard battleWindow == nil, !pendingChallengeAlert else { respond(false); return }
+        pendingChallengeAlert = true
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "대전 신청"
+        alert.informativeText = "\(fromName)님이 대전을 신청했어요. 수락할까요?"
+        alert.addButton(withTitle: "수락")
+        alert.addButton(withTitle: "거절")
+        let accepted = alert.runModal() == .alertFirstButtonReturn
+        pendingChallengeAlert = false
+        respond(accepted)
+    }
+
+    private func presentBattle(myRole: BattleRole, outcome: BattleOutcome, opponentName: String, opponentPet: String) {
+        guard battleWindow == nil else { return }
+        guard let mySheet = try? Self.loadSpriteSheet(slug: selectedPetSlug) else { return }
+        // Fall back to our own sheet if the opponent's pet isn't bundled here.
+        let oppSheet = (try? Self.loadSpriteSheet(slug: opponentPet)) ?? mySheet
+
+        let view = BattleView(
+            mySheet: mySheet,
+            oppSheet: oppSheet,
+            myName: "나",
+            oppName: opponentName,
+            myRole: myRole,
+            outcome: outcome
+        )
+        let win = BattleWindow(view: view) { [weak self] in
+            self?.battleWindow = nil
+        }
+        battleWindow = win
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
+        view.start()
+    }
+
+    private func showInfo(title: String, text: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.addButton(withTitle: "확인")
+        alert.runModal()
+    }
+
+    /// Builds the "대전" item. Its submenu lists everyone currently discovered on
+    /// the same Wi-Fi; picking one sends them a challenge. Shows a disabled
+    /// placeholder while nobody's around yet.
+    private func makeBattleMenuItem() -> NSMenuItem {
+        let battleItem = NSMenuItem(title: "대전", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        if battlePeers.isEmpty {
+            let empty = NSMenuItem(title: "주변에 상대가 없어요", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+        } else {
+            for peer in battlePeers {
+                let item = NSMenuItem(title: "\(peer.name)에게 신청", action: #selector(challengePeer(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = peer.id
+                submenu.addItem(item)
+            }
+        }
+        battleItem.submenu = submenu
+        return battleItem
     }
 
     /// 펫마다 속성기 이펙트 그림이 다르다(파이리 불길 / 꼬부기 물줄기). 매니페스트가
@@ -393,6 +528,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(evoItem)
 
         menu.addItem(.separator())
+        menu.addItem(makeBattleMenuItem())
+
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -469,6 +607,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyStage()
 
         Self.savePetSlug(slug)
+        battleService?.updatePet(slug) // re-advertise so peers see our new character
         // Re-derive the shown form from the new base + current XP stage (so
         // picking a pet while already "leveled up" shows its evolved form).
         refreshDisplayedPet()

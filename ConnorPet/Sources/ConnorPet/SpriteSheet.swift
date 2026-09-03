@@ -35,6 +35,18 @@ final class SpriteSheet {
         }
     }
 
+    /// Loads a bundled pet by slug from `Resources/pets/<slug>/`. Shared by the
+    /// menu-bar picker and the battle screen so both resolve characters the same way.
+    static func bundled(slug: String) throws -> SpriteSheet {
+        guard
+            let spritesheetURL = Bundle.module.url(forResource: "spritesheet", withExtension: "png", subdirectory: "pets/\(slug)"),
+            let manifestURL = Bundle.module.url(forResource: "pet", withExtension: "json", subdirectory: "pets/\(slug)")
+        else {
+            throw NSError(domain: "ConnorPet", code: 1, userInfo: [NSLocalizedDescriptionKey: "missing bundled resources for pet '\(slug)'"])
+        }
+        return try SpriteSheet(manifestURL: manifestURL, spritesheetURL: spritesheetURL)
+    }
+
     func animation(named name: String) -> SpriteAnimationFrames? {
         if let cached = animationCache[name] {
             return cached
