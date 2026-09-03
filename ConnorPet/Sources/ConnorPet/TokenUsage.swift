@@ -46,6 +46,33 @@ final class TranscriptTokenReader {
         return paths.reduce(0) { $0 + tokens(atPath: $1) }
     }
 
+    /// 마지막 호출 이후 **새로 쌓인** 토큰만 돌려준다.
+    ///
+    /// `total(for:)` 은 지금 살아 있는 세션들의 합이라 세션이 끝나면 줄어든다.
+    /// 경험치를 펫별로 나누려면 "누가 화면에 있는 동안 얼마나 일했나"를 세야 하고,
+    /// 그러려면 감소하지 않는 값이 필요하다. 트랜스크립트 파일 하나하나는 늘어나기만
+    /// 하므로, 파일별 증가분을 더한다.
+    ///
+    /// 처음 보는 트랜스크립트는 **현재 값으로 등록만 하고 증가분에 넣지 않는다.**
+    /// 안 그러면 앱을 켜거나 펫을 바꾼 직후에 이미 진행 중이던 세션의 과거 사용량이
+    /// 통째로 그 펫에게 쏟아진다.
+    func accrued(for entries: [AgentStatusEntry]) -> Double {
+        let paths = Set(entries.compactMap { $0.transcriptPath })
+        var gained: Double = 0
+        for path in paths {
+            let now = tokens(atPath: path)
+            if let seen = accrualBaseline[path] {
+                // 파일이 줄어드는 일은 없어야 하지만(추가 전용), 트랜스크립트가
+                // 교체·재작성되는 경우를 대비해 음수는 버리고 기준선만 낮춘다.
+                if now > seen { gained += now - seen }
+            }
+            accrualBaseline[path] = now
+        }
+        return gained
+    }
+
+    private var accrualBaseline: [String: Double] = [:]
+
     /// Parses each JSONL line and adds up `message.usage`. Loose parsing per
     /// line so one malformed line can't zero the whole file (same defensive
     /// stance as `parseAgentStatusEntries`).
