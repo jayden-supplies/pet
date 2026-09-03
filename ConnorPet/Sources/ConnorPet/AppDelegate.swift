@@ -163,7 +163,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.onSkillUsed = { [weak self] in
             Self.saveFireBreathAt(Date())
             guard let self, let petFrame = self.window?.frame else { return }
-            self.bubble?.show(text: "좋아, 여기까지! 이제부터 할 일만 볼게.",
+            // 이 콜백은 속성기를 실제로 쓴 직후에만 불리므로 noun 은 항상 있다.
+            let noun = self.currentSkillNoun ?? "한 방"
+            self.bubble?.show(text: "\(noun) 뿜었다! 여기까지 정리하고 앞으로 할 일만 볼게.",
                               above: petFrame, duration: 3.5)
         }
         view.onHoverEnter = { [weak self] in
@@ -239,6 +241,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// What the pet says when clicked: the most recent sessions and what each
     /// one was started to do. Reads Claude Code's own transcripts, so it covers
     /// both the CLI and the desktop app without either being running.
+    /// 지금 펫이 쓰는 속성기의 한 글자 이름("불"/"물"). 속성기가 없으면 nil.
+    ///
+    /// 체크포인트를 찍은 시점의 펫이 아니라 **지금 보이는 펫** 기준이다. 펫을 바꿔
+    /// 가며 쓰는 상황에서 어느 쪽이 맞다고 하기 어려운데, 말풍선을 띄우는 그 펫이
+    /// 자기 기술로 말하는 편이 덜 어색하다.
+    private var currentSkillNoun: String? {
+        guard let row = petView?.currentSpriteSheet.manifest.skill?.row,
+              let name = PetAnimationName(rawValue: row) else { return nil }
+        return name.skillNoun
+    }
+
     /// 지금 말해야 할 브리프 묶음과 앞에 붙일 문장. 클릭과 예열이 **같은** 묶음을
     /// 보게 하려고 뽑아 뒀다 — 다르면 예열이 엉뚱한 걸 요약하고 캐시가 늘 빗나간다.
     private func currentBriefs() -> (briefs: [SessionBrief], prefix: String?, empty: String?) {
@@ -252,8 +265,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     limit: briefPrimaryLimit,
                     perBriefChars: briefCharsPerSession
                 )
-                return (briefs, "불 뿜은 뒤로 이것들만 남았어.",
-                        "불 뿜은 뒤로 새로 시작한 작업은 아직 없어. 깨끗해.")
+                // 체크포인트를 찍어 둔 뒤 속성기가 없는 펫으로 바꿔 놓았을 수 있다.
+                // 그 펫이 "불 뿜은 뒤로" 라고 말하면 이상하므로 중립 문구를 쓴다.
+                let since = currentSkillNoun.map { "\($0) 뿜은 뒤로" } ?? "여기까지 정리한 뒤로"
+                return (briefs, "\(since) 이것들만 남았어.",
+                        "\(since) 새로 시작한 작업은 아직 없어. 깨끗해.")
             }
         }
 
@@ -666,6 +682,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 속성기 스냅샷
 
     // 마지막으로 속성기를 쓴 시각. 앱을 껐다 켜도 유지돼야 체크포인트로 쓸모가 있다.
+    // 키 이름이 fire 인 것은 불뿜기만 있던 때의 잔재다. 바꾸면 이미 저장된 값이
+    // 버려지므로 그대로 둔다 — 체크포인트는 기술 종류와 무관하게 하나다.
     private static let fireBreathDefaultsKey = "lastFireBreathAt"
 
     private static func saveFireBreathAt(_ date: Date) {
