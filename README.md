@@ -250,7 +250,15 @@ swift run
 3. macOS 러너가 `AppDelegate.swift`의 `availablePetSlugs`를 (커밋하지 않고, 빌드 시점에만) 고른 펫 하나로 임시 치환한 뒤 `swift build -c release`로 빌드하고, `<Pet>-pet.app`으로 번들링해서 `<Pet>-pet.dmg`를 만듭니다. 진화형 스프라이트는 리소스 번들(`Resources/pets`) 전체가 항상 함께 들어가므로 별도 처리 없이도 진화가 정상 동작합니다. 앱 아이콘은 고른 펫의 스프라이트시트에서 원색 그대로인 "running" 프레임을 잘라 `.icns`로 구워 넣습니다(idle 프레임은 이 저장소의 리스킨 규칙상 "잠듦" 상태로 탈색되어 있어서 제외).
 4. 실행이 끝나면 해당 워크플로우 실행 화면의 **Artifacts**에서 `<Pet>-pet-dmg`를 다운로드
 
-코드서명/공증(notarization)은 하지 않고 ad-hoc 서명만 합니다(`codesign --sign -`). 서명 없이 그대로 두면 손으로 조립한 `.app` 번들이 quarantine 플래그와 맞물려 macOS가 "손상되었기 때문에 열 수 없음"이라며 아예 실행을 거부하는 문제가 있어서, 최소한의 ad-hoc 서명으로 이를 막았습니다. 다만 Apple Developer ID 서명은 아니라서 처음 실행할 때 "확인되지 않은 개발자" Gatekeeper 경고는 여전히 뜰 수 있습니다 — 이때는 dmg를 마운트한 뒤 우클릭(Control-클릭) → "열기"로 열면 됩니다.
+코드서명/공증(notarization)은 하지 않고 ad-hoc 서명만 합니다(`codesign --sign -`). 서명 없이 그대로 두면 손으로 조립한 `.app` 번들이 quarantine 플래그와 맞물려 macOS가 "손상되었기 때문에 열 수 없음"이라며 실행을 거부하는 문제가 있어서, 최소한의 ad-hoc 서명으로 이를 막았습니다.
+
+**다운로드 후 반드시 quarantine을 직접 벗겨줘야 열립니다.** Apple Developer ID 서명이 아니라서 "확인되지 않은 개발자" 경고 정도로 끝나지 않고, 다운로드한 파일(quarantine 플래그가 붙음)을 그대로 더블클릭하면 macOS(특히 Apple Silicon)의 `amfid`가 "adhoc signed or signed by an unknown certificate chain"이라며 실행 자체를 막고 **아무 대화상자도 띄우지 않은 채 앱을 곧장 휴지통으로 옮겨버립니다** — 우클릭 → 열기로도 우회되지 않습니다(실제로 재현해서 확인한 동작입니다). 아래처럼 터미널에서 quarantine을 지운 뒤 열어야 합니다:
+
+```sh
+# dmg를 마운트해서 <Pet>-pet.app을 Applications(또는 원하는 위치)로 옮긴 다음:
+xattr -d com.apple.quarantine /Applications/<Pet>-pet.app
+open /Applications/<Pet>-pet.app
+```
 
 ## 테스트하기 (실제 에이전트 없이)
 

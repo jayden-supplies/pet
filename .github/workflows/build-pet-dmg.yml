@@ -88,7 +88,11 @@ jobs:
           APP="$PET_NAME.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
           cp .build/release/ConnorPet "$APP/Contents/MacOS/ConnorPet"
-          cp -R .build/release/ConnorPet_ConnorPet.bundle "$APP/Contents/Resources/"
+          # AppDelegate.swift의 resourceBundle이 Bundle.main.resourceURL(=이 경로)을
+          # 먼저 찾아보도록 되어 있다 — SwiftPM 기본 accessor(Bundle.module)는 .app
+          # 번들 루트에서 찾는데, 거기 두면 codesign이 "unsealed contents present in
+          # the bundle root"로 서명 자체를 거부해서 quarantine 시 "손상됨" 오류가 남.
+          cp -R .build/release/ConnorPet_ConnorPet.bundle "$APP/Contents/Resources/ConnorPet_ConnorPet.bundle"
           cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
           cat > "$APP/Contents/Info.plist" <<PLIST
@@ -148,5 +152,10 @@ jobs:
           {
             echo "## $PET_NAME.dmg"
             echo ""
-            echo "코드서명/공증(notarization) 없이 ad-hoc 서명만 했습니다. 처음 실행 시 \"확인되지 않은 개발자\" Gatekeeper 경고가 뜰 수 있으니, dmg를 마운트한 뒤 우클릭(또는 Control-클릭) → \"열기\"로 실행하세요."
+            echo "코드서명/공증(notarization) 없이 ad-hoc 서명만 했습니다. 다운로드한 파일은 quarantine 플래그가 붙어 있어서, 그대로 더블클릭하면 macOS(특히 Apple Silicon)가 아무 안내도 없이 실행을 막고 앱을 휴지통으로 옮겨버립니다(우클릭 → 열기로도 안 열림). 다음을 터미널에서 실행한 뒤 여세요:"
+            echo ""
+            echo '```sh'
+            echo "xattr -d com.apple.quarantine /path/to/$PET_NAME.app"
+            echo "open /path/to/$PET_NAME.app"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

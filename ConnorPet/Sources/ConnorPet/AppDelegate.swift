@@ -320,13 +320,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func loadSpriteSheet(slug: String) throws -> SpriteSheet {
         guard
-            let spritesheetURL = Bundle.module.url(forResource: "spritesheet", withExtension: "png", subdirectory: "pets/\(slug)"),
-            let manifestURL = Bundle.module.url(forResource: "pet", withExtension: "json", subdirectory: "pets/\(slug)")
+            let spritesheetURL = resourceBundle.url(forResource: "spritesheet", withExtension: "png", subdirectory: "pets/\(slug)"),
+            let manifestURL = resourceBundle.url(forResource: "pet", withExtension: "json", subdirectory: "pets/\(slug)")
         else {
             throw NSError(domain: "ConnorPet", code: 1, userInfo: [NSLocalizedDescriptionKey: "missing bundled resources for pet '\(slug)'"])
         }
         return try SpriteSheet(manifestURL: manifestURL, spritesheetURL: spritesheetURL)
     }
+
+    // SwiftPM's generated Bundle.module only looks for the resource bundle next to
+    // the raw executable (Bundle.main.bundleURL) or a hardcoded build-time path —
+    // neither works once ConnorPet is wrapped in a proper, code-signed .app: a
+    // resource bundle sitting loose at the .app root (outside Contents/) makes
+    // codesign refuse to seal the bundle ("unsealed contents present in the
+    // bundle root"), which macOS then reports as "damaged" once quarantined.
+    // Prefer Contents/Resources first (where the .app packaging step places it);
+    // Bundle.module still covers plain `swift run`/`.build/release/ConnorPet`,
+    // where Bundle.main.resourceURL already points at the same flat directory
+    // the loose bundle sits in.
+    private static let resourceBundle: Bundle = {
+        if let resourceURL = Bundle.main.resourceURL {
+            let candidate = resourceURL.appendingPathComponent("ConnorPet_ConnorPet.bundle")
+            if let bundle = Bundle(url: candidate) { return bundle }
+        }
+        return Bundle.module
+    }()
 
     // Menu-bar glyph for the Totodile pet: a Poké Ball outline, drawn to match
     // the monochrome/template style of the other system status-bar icons
