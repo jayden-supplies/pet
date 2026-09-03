@@ -184,16 +184,26 @@ final class PetView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
+        // 기본값(true)이면 AppKit 이 target/action 존재 여부만 보고 활성화를 다시
+        // 판단해서, 우리가 준 isEnabled 를 덮어쓴다. 그러면 이 펫에 없는 모션도
+        // 눌리는 것처럼 보이고 눌러도 아무 일이 없다.
+        menu.autoenablesItems = false
         menu.addItem(withTitle: "모션", action: nil, keyEquivalent: "").isEnabled = false
 
         let auto = NSMenuItem(title: "자동 (에이전트 상태 따르기)", action: #selector(pinMotion(_:)), keyEquivalent: "")
         auto.target = self
         auto.representedObject = nil as String?
         auto.state = pinnedAnimation == nil ? .on : .off
+        auto.isEnabled = true
         menu.addItem(auto)
         menu.addItem(.separator())
 
         for name in PetAnimationName.allCases {
+            // 이 펫의 매니페스트에 없는 행은 재생할 수가 없다. 회색으로 남겨 두느니
+            // 아예 안 보이는 게 낫다 — 속성기는 포켓몬 타입에 묶여 있어서, 파이리
+            // 메뉴에 "물뿜기"가 있는 것 자체가 이상하다.
+            guard spriteSheet.animation(named: name.rawValue) != nil else { continue }
+
             // 단축키가 붙은 모션은 고정이 아니라 그 자리에서 한 번 실행되는 동작이다.
             let shortcut = name.menuShortcut
             let action: Selector
@@ -211,8 +221,7 @@ final class PetView: NSView {
             item.target = self
             item.representedObject = name.rawValue
             item.state = (shortcut == nil && pinnedAnimation == name) ? .on : .off
-            // A motion with no row in this pet's manifest cannot be played.
-            item.isEnabled = spriteSheet.animation(named: name.rawValue) != nil
+            item.isEnabled = true
             menu.addItem(item)
         }
 
@@ -224,6 +233,7 @@ final class PetView: NSView {
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "나가", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
         quit.target = NSApp
+        quit.isEnabled = true
         menu.addItem(quit)
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
