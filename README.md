@@ -184,7 +184,7 @@ Orca의 훅 서버는 열려있는 모든 에이전트 패널의 상태를 250ms
 같은 Wi-Fi에 이 앱을 켜둔 사람끼리 **1:1 대전**을 할 수 있습니다 — 디지몬 다마고치처럼 대전 신청 → 상대가 수락 → 양쪽이 동시에 같은 대전 화면을 봅니다.
 
 - 메뉴바 아이콘 → **대전** 서브메뉴에 같은 Wi-Fi에서 실행 중인 다른 앱들이 뜹니다 (없으면 "주변에 상대가 없어요").
-- 상대를 고르면 그쪽에 **수락/거절** 창이 뜨고, 수락하면 양쪽 화면에 **풀스크린 투명 오버레이**가 떠서(클릭은 아래로 통과) 두 펫이 화면 좌우 끝(서로 다른 공간)에 서고, **불꽃 발사체**(CAEmitterLayer)가 화면을 가로질러 날아갑니다. 방어자는 가끔 **회피**(뒤돌아 백홉)해서 발사체가 화면 밖으로 지나가고, HP를 다 깎으면 **WIN!/LOSE**로 승패를 보여줍니다.
+- 상대를 고르면 그쪽에 **수락/거절** 창이 뜨고, 수락하면 양쪽 화면에 디지몬 다마고치 같은 **작은 대전 화면**이 뜹니다. **한 번에 펫 하나만** 나오고(내 펫은 왼쪽 끝에서 오른쪽으로, 상대 펫은 오른쪽 끝에서 왼쪽으로 **불꽃 발사체**를 쏨), 발사체가 화면 밖으로 나가면 **화면이 전환**되어 상대 펫이 등장해 발사체가 반대편에서 들어옵니다. 방어자는 가끔 **회피**(뒤돌아 백홉)해서 발사체가 지나가고, HP를 다 깎으면 **WIN!/LOSE**로 승패를 보여줍니다. 한 번에 한 턴씩 번갈아 진행합니다.
 
 서버가 필요 없습니다. Apple의 **Network.framework**만 씁니다:
 
@@ -303,7 +303,7 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
     PetWindow.swift               테두리 없는 투명, 항상 위에 뜨는 NSWindow
     BattleService.swift            같은 wifi 발견(Bonjour, NWListener/NWBrowser) + 대전 신청/수락 핸드셰이크
     BattleSimulation.swift         seed 하나로 양쪽이 똑같이 계산하는 결정론적 대전 시뮬레이션(명중/회피 포함)
-    BattleWindow.swift             풀스크린 투명 오버레이 대전 화면 (불꽃 발사체 CAEmitterLayer + 회피 + HP + WIN/LOSE)
+    BattleWindow.swift             작은 LCD형 대전 화면 (펫 하나씩, 발사체 화면 밖→화면 전환, 불꽃 CAEmitterLayer + 회피 + HP + WIN/LOSE)
     BattleSelfTest.swift           CONNORPET_SELFTEST=battle 로 도는 헤드리스 핸드셰이크 검증
     SessionBrief.swift             ~/.claude/projects 트랜스크립트에서 최근 세션 진행상황 추출
     BriefingSummarizer.swift        claude CLI 로 진행상황을 요약 (캐시 + 백그라운드 갱신)

@@ -1,50 +1,45 @@
 import AppKit
 import QuartzCore
 
-/// A fullscreen, transparent, click-through overlay that hosts a battle. It's a
-/// `.nonactivatingPanel` (not a plain NSWindow) so showing it never switches
-/// Spaces or steals focus, and `ignoresMouseEvents` lets every click fall
-/// through to whatever's underneath. The pets sit at opposite screen edges — as
-/// if in different places — and the projectile flies the whole width between
-/// them. Auto-closes a few seconds after the WIN/LOSE banner.
+/// A small floating "screen" that hosts a battle — like the Digimon device's
+/// LCD. Only one pet is on screen at a time; when a shot flies off the edge the
+/// view cuts to the other pet. Centered, rounded, floats over the desktop, and
+/// auto-closes a few seconds after the WIN/LOSE banner. It's a `.nonactivatingPanel`
+/// so it never steals focus or switches Spaces.
 final class BattleWindow: NSPanel {
     private var onClosed: (() -> Void)?
 
     init(view: BattleView, onClosed: @escaping () -> Void) {
         self.onClosed = onClosed
-        let frame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let size = BattleView.screenSize
         super.init(
-            contentRect: frame,
+            contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = false
+        hasShadow = true
         level = .floating
-        ignoresMouseEvents = true      // full click-through — non-intrusive overlay
-        hidesOnDeactivate = false       // MANDATORY: else it vanishes when another app focuses
+        hidesOnDeactivate = false
         isReleasedWhenClosed = false
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
-        view.frame = NSRect(origin: .zero, size: frame.size)
-        view.autoresizingMask = [.width, .height]
+        view.frame = NSRect(origin: .zero, size: size)
         contentView = view
+        center()
 
         view.onFinished = { [weak self] in
-            // Hold the WIN/LOSE banner on screen briefly, then dismiss.
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { self?.close() }
         }
     }
 
-    // A click-through overlay must never become key/main — that would activate
-    // the app and pull focus off whatever the user is doing.
+    // Non-activating: receives clicks (to dismiss) without pulling focus.
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    /// Show without activating the app (so focus/Space stay put).
-    func present() { orderFrontRegardless() }
+    func present() { center(); orderFrontRegardless() }
 
     override func close() {
         (contentView as? BattleView)?.stop()
@@ -54,17 +49,19 @@ final class BattleWindow: NSPanel {
     }
 }
 
-/// Renders a full 1:1 battle from a deterministic `BattleOutcome`, in the spirit
-/// of the Digimon device: two monsters stand far apart, trade flaming projectiles
-/// across the whole screen, dodge some shots (turn away + hop back), HP bars
-/// drain, and a WIN/LOSE banner lands at the end. "Me" is always drawn on the
-/// left, the opponent on the right, regardless of challenger/accepter role.
+/// Renders a 1:1 battle as a single-pet, camera-cutting sequence in the spirit
+/// of the Digimon device: the attacker fills the little screen and fires, the
+/// shot flies off the edge, the screen cuts to the defender, and the shot flies
+/// back in to land or be dodged. HP for both pets sits along the top so the
+/// score stays legible even though only one pet shows at a time.
 ///
-/// The flame trail is a `CAEmitterLayer` (additive fire particles) whose position
-/// follows the manually-computed projectile each tick; everything else is drawn
-/// in `draw(_:)`, ticked by a 60fps timer off `elapsed` so the animation stays
-/// perfectly reproducible from the shared seed.
+/// Every round has two scenes with a flash-cut between them. Which sprite fills
+/// each scene depends on who's attacking, so *both* pets take their turns on
+/// screen. The whole thing is a deterministic function of `elapsed`, so it stays
+/// reproducible from the shared seed.
 final class BattleView: NSView {
+    static let screenSize = NSSize(width: 460, height: 340)
+
     private let mySheet: SpriteSheet
     private let oppSheet: SpriteSheet
     private let myName: String
@@ -72,8 +69,6 @@ final class BattleView: NSView {
     private let myRole: BattleRole
     private let outcome: BattleOutcome
 
-    /// HP snapshot for each role after round *i* is fully applied; index 0 is the
-    /// pre-battle full-HP state, so `hpTimeline[i+1]` is "after round i".
     private let hpTimeline: [(challenger: Int, accepter: Int)]
 
     private var timer: Timer?
@@ -81,23 +76,23 @@ final class BattleView: NSView {
     private var finished = false
     var onFinished: (() -> Void)?
 
-    // Battle "stance" frames — the shared idle sprite bakes in a sleep/Zzz
-    // overlay, which looks wrong mid-fight, so battle uses the clean `running`
-    // bounce (no status-condition reskin) instead.
+    // Clean battle stance (the shared idle bakes in a sleep/Zzz overlay).
     private let myPose: SpriteAnimationFrames?
     private let oppPose: SpriteAnimationFrames?
 
-    // Flame trail for the in-flight projectile (see class doc).
     private var fireEmitter: CAEmitterLayer?
 
-    // Timing (seconds) — deliberately slow so the projectile is easy to follow
-    // as it crosses the whole screen.
-    private let introDuration: TimeInterval = 1.3
-    // One clear turn per round: the attacker winds up, fires, the shot crosses,
-    // the defender reacts, then a beat of calm before the *other* pet's turn.
-    private let roundDuration: TimeInterval = 1.7
-    private let windupFraction: TimeInterval = 0.14 // attacker lunges before the shot leaves
-    private let hitFraction: TimeInterval = 0.62     // when a *hit* projectile connects
+    // Timing (seconds). Each round holds two scenes (fire + impact), so it's long.
+    private let introDuration: TimeInterval = 1.2
+    private let roundDuration: TimeInterval = 2.0
+
+    // Per-round phase boundaries, as fractions of a round:
+    private let windupEnd = 0.12    // attacker wind-up before the shot leaves
+    private let fireExit = 0.44     // shot has flown off the attacker's screen edge
+    private let cutAt = 0.50        // flash-cut midpoint (attacker → defender)
+    private let impactEnter = 0.52  // shot re-enters on the defender's screen
+    private let hitAt = 0.80        // a landing shot reaches the defender
+    private let dodgeExit = 0.95    // a dodged shot leaves the far edge
 
     init(mySheet: SpriteSheet, oppSheet: SpriteSheet, myName: String, oppName: String, myRole: BattleRole, outcome: BattleOutcome) {
         self.mySheet = mySheet
@@ -106,11 +101,9 @@ final class BattleView: NSView {
         self.oppName = oppName
         self.myRole = myRole
         self.outcome = outcome
-        // Prefer the clean `running` bounce; fall back to whatever resolves.
         self.myPose = mySheet.animation(named: "running") ?? mySheet.resolvedAnimation(for: .running)
         self.oppPose = oppSheet.animation(named: "running") ?? oppSheet.resolvedAnimation(for: .running)
 
-        // Replay rounds into an HP timeline the renderer can index by time.
         var timeline: [(challenger: Int, accepter: Int)] = [(outcome.startHP, outcome.startHP)]
         var ch = outcome.startHP, ac = outcome.startHP
         for round in outcome.rounds {
@@ -120,17 +113,17 @@ final class BattleView: NSView {
         }
         self.hpTimeline = timeline
 
-        super.init(frame: NSRect(x: 0, y: 0, width: 1440, height: 900))
+        super.init(frame: NSRect(origin: .zero, size: Self.screenSize))
         wantsLayer = true
+        layer?.cornerRadius = 18
+        layer?.masksToBounds = true // rounds the screen and clips the flame at its edges
         setUpEmitter()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not implemented") }
 
-    // MARK: - Flame emitter (CAEmitterLayer)
+    // MARK: - Flame emitter
 
-    /// A small radial white→transparent glow, drawn in code (no asset catalog),
-    /// tinted warm per-cell and composited additively for a fiery bloom.
     private static func makeGlowImage(diameter: Int = 64) -> CGImage? {
         let cs = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(data: nil, width: diameter, height: diameter,
@@ -147,24 +140,24 @@ final class BattleView: NSView {
     private func setUpEmitter() {
         let emitter = CAEmitterLayer()
         emitter.emitterShape = .point
-        emitter.emitterSize = CGSize(width: 6, height: 6)
-        emitter.renderMode = .additive // overlapping particles brighten → fire glow
+        emitter.emitterSize = CGSize(width: 5, height: 5)
+        emitter.renderMode = .additive
 
         let fire = CAEmitterCell()
         fire.name = "fire"
         fire.contents = Self.makeGlowImage()
-        fire.birthRate = 0 // gated live via KVC while a projectile is in flight
-        fire.lifetime = 0.55
+        fire.birthRate = 0
+        fire.lifetime = 0.5
         fire.lifetimeRange = 0.15
-        fire.velocity = 24
-        fire.velocityRange = 18
-        fire.emissionRange = .pi * 2 // radiate all around → round fireball
-        fire.scale = 0.75
-        fire.scaleRange = 0.3
-        fire.scaleSpeed = -0.9      // shrink as it burns out
-        fire.alphaSpeed = -1.8      // fade
+        fire.velocity = 20
+        fire.velocityRange = 16
+        fire.emissionRange = .pi * 2
+        fire.scale = 0.55
+        fire.scaleRange = 0.25
+        fire.scaleSpeed = -0.9
+        fire.alphaSpeed = -1.9
         fire.color = CGColor(red: 1, green: 0.55, blue: 0.16, alpha: 1)
-        fire.greenSpeed = -0.5      // redden as it cools
+        fire.greenSpeed = -0.5
         fire.blueSpeed = -0.4
         emitter.emitterCells = [fire]
 
@@ -172,17 +165,12 @@ final class BattleView: NSView {
         fireEmitter = emitter
     }
 
-    /// Move the flame to `point` and turn emission on/off. Wrapped in a
-    /// non-animated transaction so the position snaps each frame instead of
-    /// lagging behind on an implicit animation.
     private func updateEmitter(active: Bool, at point: CGPoint) {
         guard let emitter = fireEmitter else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         emitter.emitterPosition = point
-        // Toggle the *named* cell's birthRate via KVC (toggling the layer's own
-        // birthRate is unreliable for stop/start).
-        emitter.setValue(active ? 260.0 : 0.0, forKeyPath: "emitterCells.fire.birthRate")
+        emitter.setValue(active ? 220.0 : 0.0, forKeyPath: "emitterCells.fire.birthRate")
         CATransaction.commit()
     }
 
@@ -190,9 +178,7 @@ final class BattleView: NSView {
 
     func start() {
         startTime = Date().timeIntervalSinceReferenceDate
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.tick()
-        }
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }
@@ -203,8 +189,11 @@ final class BattleView: NSView {
         updateEmitter(active: false, at: .zero)
     }
 
+    override func mouseDown(with event: NSEvent) { window?.close() }
+
     private var elapsed: TimeInterval { Date().timeIntervalSinceReferenceDate - startTime }
     private var battleEnd: TimeInterval { introDuration + Double(outcome.rounds.count) * roundDuration }
+
     private var burstIndex = 0
     private var nextBurstAt: TimeInterval = 0
 
@@ -218,14 +207,12 @@ final class BattleView: NSView {
         maybeCaptureSnapshot()
     }
 
-    // Test hook: with CONNORPET_BATTLE_SNAPSHOT set, dump a *burst* of frames
-    // (`<stem>_NN.png`) every 0.3s. `cacheDisplay` renders only THIS instance's
-    // own overlay — never another running copy's — so the burst shows one
-    // machine's clean turn-by-turn view for headless verification.
+    // Test hook: dump a burst of frames (`<stem>_NN.png`) via cacheDisplay, which
+    // renders only this instance's own screen — for headless verification.
     private func maybeCaptureSnapshot() {
         guard let path = ProcessInfo.processInfo.environment["CONNORPET_BATTLE_SNAPSHOT"],
-              elapsed >= nextBurstAt, burstIndex <= 30 else { return }
-        nextBurstAt = elapsed + 0.3
+              elapsed >= nextBurstAt, burstIndex <= 40 else { return }
+        nextBurstAt = elapsed + 0.25
         let url = URL(fileURLWithPath: path)
         let dir = url.deletingLastPathComponent()
         let stem = url.deletingPathExtension().lastPathComponent
@@ -240,236 +227,253 @@ final class BattleView: NSView {
         }
     }
 
-    // MARK: - Layout (fullscreen)
+    // MARK: - Layout
+    //
+    // My pet lives at the LEFT edge and shoots right; the opponent lives at the
+    // RIGHT edge and shoots left. So the pet firing right sits at the left edge,
+    // the pet firing left sits at the right edge — and every shot has the full
+    // width of the little screen to cross.
 
-    private var petSize: CGFloat { min(180, bounds.height * 0.24) }
-    private var baselineY: CGFloat { bounds.height * 0.42 }
-    private var leftCenter: CGPoint { CGPoint(x: bounds.width * 0.16, y: baselineY) }
-    private var rightCenter: CGPoint { CGPoint(x: bounds.width * 0.84, y: baselineY) }
-    private var projectileY: CGFloat { baselineY + petSize * 0.04 }
+    private var petSize: CGFloat { min(bounds.height, bounds.width) * 0.46 }
+    private var baseY: CGFloat { bounds.midY - 12 }
+    private var leftPetCenter: CGPoint { CGPoint(x: petSize * 0.5 + 8, y: baseY) }
+    private var rightPetCenter: CGPoint { CGPoint(x: bounds.width - petSize * 0.5 - 8, y: baseY) }
+    private var projectileY: CGFloat { baseY + petSize * 0.02 }
+    private var leftEdge: CGFloat { -30 }
+    private var rightEdge: CGFloat { bounds.width + 30 }
+
+    /// Where a role's pet stands and which way it faces.
+    private func home(for role: BattleRole) -> (center: CGPoint, facingRight: Bool) {
+        role == myRole ? (leftPetCenter, true) : (rightPetCenter, false)
+    }
+    private func pose(for role: BattleRole) -> SpriteAnimationFrames? {
+        role == myRole ? myPose : oppPose
+    }
 
     // MARK: - Rendering
 
     override func draw(_ dirtyRect: NSRect) {
-        drawBackground()
-
+        drawScreenBackground()
         let t = elapsed
-        let myIsChallenger = (myRole == .challenger)
 
-        // Which round, and how far into it.
-        let roundsElapsed = max(0, t - introDuration)
+        if t < introDuration {
+            drawPose(myPose, facingRight: true, at: leftPetCenter, flash: false)
+            drawTopHUD(myHP: outcome.startHP, oppHP: outcome.startHP)
+            drawCenterBanner("VS", color: .white)
+            drawBorder()
+            updateEmitter(active: false, at: .zero)
+            return
+        }
+
+        let roundsElapsed = t - introDuration
         let roundIndex = min(outcome.rounds.count, Int(roundsElapsed / roundDuration))
-        let roundProgress = roundDuration > 0 ? (roundsElapsed - Double(roundIndex) * roundDuration) / roundDuration : 0
+        guard roundIndex < outcome.rounds.count else {
+            // Battle over: hold on the last scene under the banner.
+            drawFinalFrame()
+            drawBorder()
+            updateEmitter(active: false, at: .zero)
+            return
+        }
+        let f = (roundsElapsed - Double(roundIndex) * roundDuration) / roundDuration
+        let round = outcome.rounds[roundIndex]
+        let attacker = round.attacker
+        let defender = attacker.opponent
 
-        let inRound = roundIndex < outcome.rounds.count
-        let round = inRound ? outcome.rounds[roundIndex] : nil
-        let attackerIsMe = round.map { $0.attacker == myRole } ?? false
-        let dodged = round?.dodged ?? false
+        // HP to show (snap once a landing shot connects).
+        let connected = !round.dodged && f >= hitAt
+        let hp = hpTimeline[min(connected ? roundIndex + 1 : roundIndex, hpTimeline.count - 1)]
+        let myHP = myRole == .challenger ? hp.challenger : hp.accepter
+        let oppHP = myRole == .challenger ? hp.accepter : hp.challenger
 
-        // HP shown: on a *landing* hit, snap to the post-round value once the
-        // projectile connects; a dodge never changes HP.
-        let connected = inRound && !dodged && roundProgress >= hitFraction
-        let hpIndex = connected ? roundIndex + 1 : roundIndex
-        let hp = hpTimeline[min(hpIndex, hpTimeline.count - 1)]
-        let myHP = myIsChallenger ? hp.challenger : hp.accepter
-        let oppHP = myIsChallenger ? hp.accepter : hp.challenger
-
-        // Defender reactions: a landing hit flashes+shakes them; a dodge turns
-        // them away and hops them back around the moment the shot arrives. The
-        // attacker jabs forward as it fires so it's obvious whose turn it is.
-        var myFlash = false, oppFlash = false
-        var myDodge: CGFloat = 0, oppDodge: CGFloat = 0   // 0…1 dodge amount
-        var myLunge: CGFloat = 0, oppLunge: CGFloat = 0   // attacker forward jab (px)
-        if inRound {
-            let defenderIsMe = !attackerIsMe
-            if dodged {
-                // Dodge window straddles the pass-by point.
-                let d = dodgeAmount(progress: roundProgress)
-                if defenderIsMe { myDodge = d } else { oppDodge = d }
-            } else if roundProgress >= hitFraction && roundProgress < hitFraction + 0.2 {
-                if defenderIsMe { myFlash = true } else { oppFlash = true }
-            }
-            let lunge = attackLunge(progress: roundProgress) * (petSize * 0.16)
-            if attackerIsMe { myLunge = lunge } else { oppLunge = lunge }
+        if f < cutAt {
+            drawFireScene(attacker: attacker, f: f)
+        } else {
+            drawImpactScene(attacker: attacker, defender: defender, f: f, dodged: round.dodged)
         }
 
-        // Pets: left = me facing right; right = opponent facing left (flipped).
-        // A dodging pet flips to face away and hops backward (away from center).
-        drawPet(myPose, center: leftCenter, baseFlipped: false,
-                dodge: myDodge, awaySign: -1, lunge: myLunge, flash: myFlash)
-        drawPet(oppPose, center: rightCenter, baseFlipped: true,
-                dodge: oppDodge, awaySign: +1, lunge: oppLunge, flash: oppFlash)
+        drawTopHUD(myHP: myHP, oppHP: oppHP)
 
-        // Projectile + flame.
-        drawProjectile(roundIndex: roundIndex, inRound: inRound, attackerIsMe: attackerIsMe,
-                       dodged: dodged, roundProgress: roundProgress)
+        // Flash-cut between the two scenes.
+        let cutHalf = 0.06
+        if abs(f - cutAt) < cutHalf {
+            let a = (1 - abs(f - cutAt) / cutHalf) * 0.9
+            NSColor(white: 1, alpha: CGFloat(a)).setFill()
+            NSBezierPath(rect: bounds).fill()
+        }
 
-        // HP bars + names, pinned to the top corners.
-        let barW = min(340, bounds.width * 0.30)
-        let barY = bounds.height * 0.80
-        drawHP(name: myName, hp: myHP, maxHP: outcome.startHP,
-               at: CGRect(x: bounds.width * 0.06, y: barY, width: barW, height: 20), rightAligned: false)
-        drawHP(name: oppName, hp: oppHP, maxHP: outcome.startHP,
-               at: CGRect(x: bounds.width * 0.94 - barW, y: barY, width: barW, height: 20), rightAligned: true)
+        drawBorder()
+    }
 
-        if t < introDuration { drawCenterBanner("VS", color: .white) }
-        if finished {
-            let iWon = (outcome.winner == myRole)
-            drawCenterBanner(iWon ? "WIN!" : "LOSE", color: iWon ? .systemYellow : .systemGray)
+    /// Scene 1 — the attacker sits at its edge, winds up, and fires a shot that
+    /// crosses the whole screen and off the far edge.
+    private func drawFireScene(attacker: BattleRole, f: Double) {
+        let (base, facingRight) = home(for: attacker)
+        let dir: CGFloat = facingRight ? 1 : -1
+        let lunge = lungeAmount(f) * (petSize * 0.12) * dir
+        // Ease slightly inward as the camera starts to chase the shot.
+        let chase = f > fireExit - 0.06 ? CGFloat((f - (fireExit - 0.06)) / 0.06) * (bounds.width * 0.10) * dir : 0
+        let center = CGPoint(x: base.x + lunge + chase, y: base.y)
+        drawPose(pose(for: attacker), facingRight: facingRight, at: center, flash: false)
+
+        if f >= windupEnd {
+            let muzzle = base.x + dir * petSize * 0.5
+            let exitX = facingRight ? rightEdge : leftEdge
+            let p = (f - windupEnd) / (fireExit - windupEnd)
+            let x = muzzle + (exitX - muzzle) * CGFloat(min(p, 1))
+            if f < fireExit { drawShot(at: CGPoint(x: x, y: projectileY)) } else { updateEmitter(active: false, at: .zero) }
+        } else {
+            updateEmitter(active: false, at: .zero)
         }
     }
 
-    /// Smooth 0→1→0 dodge intensity across the pass-by window of a dodged round.
-    private func dodgeAmount(progress: Double) -> CGFloat {
-        let lo = hitFraction - 0.22, hi = hitFraction + 0.18
-        guard progress >= lo, progress <= hi else { return 0 }
-        return CGFloat(sin((progress - lo) / (hi - lo) * .pi))
+    /// Scene 2 — cut to the defender at the *other* edge; the shot re-enters from
+    /// the attacker's side and crosses to it. It lands (flash + HP drop) or the
+    /// defender turns away and hops back, letting the shot sail off the far edge.
+    private func drawImpactScene(attacker: BattleRole, defender: BattleRole, f: Double, dodged: Bool) {
+        let shotGoesRight = home(for: attacker).facingRight
+        let (base, facingRight) = home(for: defender)
+        let hitDir: CGFloat = shotGoesRight ? 1 : -1
+        let entryX = shotGoesRight ? leftEdge : rightEdge
+        let farX = shotGoesRight ? rightEdge : leftEdge
+        let defenderFront = base.x - hitDir * petSize * 0.5 // side toward the incoming shot
+
+        let dodge = dodged ? dodgeAmount(f) : 0
+        let hop = dodge * (petSize * 0.24) * hitDir          // hop away from the incoming shot
+        let slideIn = f < impactEnter + 0.08 ? CGFloat((impactEnter + 0.08 - f) / 0.08) * (bounds.width * 0.12) * hitDir : 0
+        let center = CGPoint(x: base.x + hop + slideIn, y: base.y + dodge * petSize * 0.06)
+        let facing = dodge > 0.5 ? shotGoesRight : facingRight // dodge → face away (= shot direction)
+        let flash = !dodged && f >= hitAt && f < hitAt + 0.12
+        drawPose(pose(for: defender), facingRight: facing, at: center, flash: flash)
+
+        guard f >= impactEnter else { updateEmitter(active: false, at: .zero); return }
+        if dodged {
+            let p = (f - impactEnter) / (dodgeExit - impactEnter)
+            let x = entryX + (farX - entryX) * CGFloat(min(p, 1))
+            if f < dodgeExit { drawShot(at: CGPoint(x: x, y: projectileY)) } else { updateEmitter(active: false, at: .zero) }
+        } else {
+            let p = (f - impactEnter) / (hitAt - impactEnter)
+            let x = entryX + (defenderFront - entryX) * CGFloat(min(p, 1))
+            if f < hitAt { drawShot(at: CGPoint(x: x, y: projectileY)) } else { updateEmitter(active: false, at: .zero) }
+        }
     }
 
-    /// Quick out-and-back jab the attacker does as it fires (0→1→0), so it reads
-    /// as clearly *this* pet's turn.
-    private func attackLunge(progress: Double) -> CGFloat {
-        let hi = windupFraction + 0.24
-        guard progress >= 0, progress <= hi else { return 0 }
-        return CGFloat(sin(progress / hi * .pi))
+    private func drawFinalFrame() {
+        // Show the winner's pet at its home edge, under the banner.
+        let (base, facing) = home(for: outcome.winner)
+        drawPose(pose(for: outcome.winner), facingRight: facing, at: base, flash: false)
+        let hp = hpTimeline[hpTimeline.count - 1]
+        drawTopHUD(myHP: myRole == .challenger ? hp.challenger : hp.accepter,
+                   oppHP: myRole == .challenger ? hp.accepter : hp.challenger)
+        drawCenterBanner(outcome.winner == myRole ? "WIN!" : "LOSE",
+                         color: outcome.winner == myRole ? .systemYellow : .systemGray)
     }
 
-    private func drawBackground() {
-        // Semi-transparent arena: dark enough to read HP/pets, sheer enough that
-        // the desktop shows through — reinforcing "the pets are out in your space".
-        let top = NSColor(calibratedRed: 0.06, green: 0.07, blue: 0.12, alpha: 0.46)
-        let bottom = NSColor(calibratedRed: 0.03, green: 0.03, blue: 0.06, alpha: 0.34)
+    private func lungeAmount(_ f: Double) -> CGFloat {
+        let hi = windupEnd + 0.18
+        guard f >= 0, f <= hi else { return 0 }
+        return CGFloat(sin(f / hi * .pi))
+    }
+
+    private func dodgeAmount(_ f: Double) -> CGFloat {
+        let lo = hitAt - 0.14, hi = hitAt + 0.14
+        guard f >= lo, f <= hi else { return 0 }
+        return CGFloat(sin((f - lo) / (hi - lo) * .pi))
+    }
+
+    // MARK: - Primitives
+
+    private func screenRect() -> NSRect { bounds }
+
+    private func drawScreenBackground() {
+        let top = NSColor(calibratedRed: 0.09, green: 0.12, blue: 0.20, alpha: 1)
+        let bottom = NSColor(calibratedRed: 0.04, green: 0.05, blue: 0.09, alpha: 1)
         NSGradient(starting: top, ending: bottom)?.draw(in: bounds, angle: -90)
-
-        // Faint ground line at the pets' feet.
-        let footY = baselineY - petSize * 0.5
-        let ground = NSBezierPath()
-        ground.move(to: NSPoint(x: 0, y: footY))
-        ground.line(to: NSPoint(x: bounds.width, y: footY))
-        NSColor(white: 1, alpha: 0.10).setStroke()
-        ground.lineWidth = 2
-        ground.stroke()
+        // Ground line under the pets.
+        let footY = baseY - petSize * 0.5
+        let g = NSBezierPath()
+        g.move(to: NSPoint(x: 0, y: footY)); g.line(to: NSPoint(x: bounds.width, y: footY))
+        NSColor(white: 1, alpha: 0.10).setStroke(); g.lineWidth = 1.5; g.stroke()
     }
 
-    private func drawPet(_ frames: SpriteAnimationFrames?, center: CGPoint, baseFlipped: Bool,
-                         dodge: CGFloat, awaySign: CGFloat, lunge: CGFloat, flash: Bool) {
+    private func drawBorder() {
+        let r = bounds.insetBy(dx: 1, dy: 1)
+        let p = NSBezierPath(roundedRect: r, xRadius: 17, yRadius: 17)
+        NSColor(white: 1, alpha: 0.14).setStroke(); p.lineWidth = 2; p.stroke()
+    }
+
+    private func drawPose(_ frames: SpriteAnimationFrames?, facingRight: Bool, at center: CGPoint, flash: Bool) {
         guard let frames, !frames.images.isEmpty else { return }
-        // Cycle pose frames by wall-clock using their declared durations.
         let totalMs = frames.durationsMs.reduce(0, +)
         var index = 0
         if totalMs > 0 {
             var acc = (elapsed * 1000).truncatingRemainder(dividingBy: totalMs)
-            for (i, d) in frames.durationsMs.enumerated() {
-                if acc < d { index = i; break }
-                acc -= d
-            }
+            for (i, d) in frames.durationsMs.enumerated() { if acc < d { index = i; break }; acc -= d }
         }
         let image = frames.images[min(index, frames.images.count - 1)]
-
-        // Dodging: hop backward (away from center) and turn to face away.
-        // Attacking: jab forward (toward center = opposite of "away").
-        let hopX = awaySign * dodge * (petSize * 0.22)
-        let hopY = dodge * (petSize * 0.10)
-        let lungeX = -awaySign * lunge
-        let flipped = dodge > 0.5 ? !baseFlipped : baseFlipped
-        let cx = center.x + hopX + lungeX
-        let cy = center.y + hopY
-        let rect = NSRect(x: cx - petSize / 2, y: cy - petSize / 2, width: petSize, height: petSize)
-
+        let rect = NSRect(x: center.x - petSize / 2, y: center.y - petSize / 2, width: petSize, height: petSize)
         let ctx = NSGraphicsContext.current?.cgContext
         ctx?.saveGState()
-        if flipped {
-            ctx?.translateBy(x: rect.midX, y: 0)
-            ctx?.scaleBy(x: -1, y: 1)
-            ctx?.translateBy(x: -rect.midX, y: 0)
+        // Sprites face right un-flipped; flip to face left.
+        if !facingRight {
+            ctx?.translateBy(x: rect.midX, y: 0); ctx?.scaleBy(x: -1, y: 1); ctx?.translateBy(x: -rect.midX, y: 0)
         }
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
         if flash {
-            NSColor(calibratedRed: 1, green: 0.25, blue: 0.25, alpha: 0.55).set()
-            image.draw(in: rect, from: .zero, operation: .sourceAtop, fraction: 0.55)
+            NSColor(calibratedRed: 1, green: 0.25, blue: 0.25, alpha: 0.6).set()
+            image.draw(in: rect, from: .zero, operation: .sourceAtop, fraction: 0.6)
         }
         ctx?.restoreGState()
     }
 
-    /// Positions the flame emitter and draws a bright core, or clears the flame
-    /// when nothing's in flight. On a hit the projectile stops at the defender;
-    /// on a dodge it sails past them and off the far edge of the screen.
-    private func drawProjectile(roundIndex: Int, inRound: Bool, attackerIsMe: Bool,
-                                dodged: Bool, roundProgress: Double) {
-        guard inRound else { updateEmitter(active: false, at: .zero); return }
-
-        // Attacker's muzzle and the target point.
-        let fromX = attackerIsMe ? leftCenter.x + petSize * 0.30 : rightCenter.x - petSize * 0.30
-        let defenderFrontX = attackerIsMe ? rightCenter.x - petSize * 0.30 : leftCenter.x + petSize * 0.30
-
-        // The shot only leaves the muzzle after the attacker's wind-up.
-        guard roundProgress >= windupFraction else { updateEmitter(active: false, at: .zero); return }
-        let flight = 1.0 - windupFraction
-
-        let x: CGFloat
-        let visible: Bool
-        if dodged {
-            // Fly from muzzle past the defender to off-screen over the rest of the turn.
-            let offX: CGFloat = attackerIsMe ? bounds.width + 100 : -100
-            let p = (roundProgress - windupFraction) / flight
-            x = fromX + (offX - fromX) * CGFloat(p)
-            visible = true
-        } else {
-            // Fly to the defender over [windup, hitFraction], then it's spent.
-            let frac = min((roundProgress - windupFraction) / (hitFraction - windupFraction), 1.0)
-            x = fromX + (defenderFrontX - fromX) * CGFloat(frac)
-            visible = roundProgress < hitFraction
-        }
-
-        guard visible else { updateEmitter(active: false, at: .zero); return }
-        let point = CGPoint(x: x, y: projectileY)
+    private func drawShot(at point: CGPoint) {
         updateEmitter(active: true, at: point)
-
-        // Bright core so there's a solid head (and something for the snapshot to
-        // capture — the emitter's live particles don't render into cacheDisplay).
-        let core = NSRect(x: point.x - 9, y: point.y - 9, width: 18, height: 18)
+        let core = NSRect(x: point.x - 8, y: point.y - 8, width: 16, height: 16)
         NSColor(calibratedRed: 1, green: 0.95, blue: 0.7, alpha: 0.95).setFill()
         NSBezierPath(ovalIn: core).fill()
-        let halo = NSRect(x: point.x - 16, y: point.y - 16, width: 32, height: 32)
+        let halo = NSRect(x: point.x - 15, y: point.y - 15, width: 30, height: 30)
         NSColor(calibratedRed: 1, green: 0.55, blue: 0.15, alpha: 0.35).setFill()
         NSBezierPath(ovalIn: halo).fill()
     }
 
-    private func drawHP(name: String, hp: Int, maxHP: Int, at rect: CGRect, rightAligned: Bool) {
-        let nameAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.boldSystemFont(ofSize: 15),
-            .foregroundColor: NSColor.white
-        ]
-        let nameStr = name as NSString
-        let nameSize = nameStr.size(withAttributes: nameAttrs)
-        let nameX = rightAligned ? rect.maxX - nameSize.width : rect.minX
-        nameStr.draw(at: NSPoint(x: nameX, y: rect.maxY + 4), withAttributes: nameAttrs)
+    private func drawTopHUD(myHP: Int, oppHP: Int) {
+        let barW: CGFloat = 150, barH: CGFloat = 12, pad: CGFloat = 16
+        let topY = bounds.height - 34
+        drawHP(name: myName, hp: myHP, maxHP: outcome.startHP,
+               at: CGRect(x: pad, y: topY, width: barW, height: barH), rightAligned: false)
+        drawHP(name: oppName, hp: oppHP, maxHP: outcome.startHP,
+               at: CGRect(x: bounds.width - pad - barW, y: topY, width: barW, height: barH), rightAligned: true)
+    }
 
-        let bg = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
-        NSColor(white: 0, alpha: 0.35).setFill(); bg.fill()
+    private func drawHP(name: String, hp: Int, maxHP: Int, at rect: CGRect, rightAligned: Bool) {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 11), .foregroundColor: NSColor.white
+        ]
+        let s = name as NSString
+        let sz = s.size(withAttributes: attrs)
+        let maxNameW = rect.width
+        let nameX = rightAligned ? rect.maxX - min(sz.width, maxNameW) : rect.minX
+        s.draw(at: NSPoint(x: nameX, y: rect.maxY + 2), withAttributes: attrs)
+
+        let bg = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
+        NSColor(white: 0, alpha: 0.4).setFill(); bg.fill()
         NSColor(white: 1, alpha: 0.18).setStroke(); bg.stroke()
 
         let frac = maxHP > 0 ? CGFloat(max(0, hp)) / CGFloat(maxHP) : 0
-        let fillWidth = (rect.width - 2) * frac
+        let fillW = (rect.width - 2) * frac
         let fillRect = rightAligned
-            ? CGRect(x: rect.maxX - 1 - fillWidth, y: rect.minY + 1, width: fillWidth, height: rect.height - 2)
-            : CGRect(x: rect.minX + 1, y: rect.minY + 1, width: fillWidth, height: rect.height - 2)
+            ? CGRect(x: rect.maxX - 1 - fillW, y: rect.minY + 1, width: fillW, height: rect.height - 2)
+            : CGRect(x: rect.minX + 1, y: rect.minY + 1, width: fillW, height: rect.height - 2)
         let color: NSColor = frac > 0.5 ? .systemGreen : (frac > 0.25 ? .systemYellow : .systemRed)
-        if fillWidth > 0.5 {
-            color.setFill()
-            NSBezierPath(roundedRect: fillRect, xRadius: 4, yRadius: 4).fill()
-        }
+        if fillW > 0.5 { color.setFill(); NSBezierPath(roundedRect: fillRect, xRadius: 3, yRadius: 3).fill() }
     }
 
     private func drawCenterBanner(_ text: String, color: NSColor) {
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 88, weight: .heavy),
-            .foregroundColor: color,
-            .strokeColor: NSColor.black,
-            .strokeWidth: -3.5
+            .font: NSFont.systemFont(ofSize: 52, weight: .heavy),
+            .foregroundColor: color, .strokeColor: NSColor.black, .strokeWidth: -3.5
         ]
-        let str = text as NSString
-        let size = str.size(withAttributes: attrs)
-        str.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2 + 30), withAttributes: attrs)
+        let s = text as NSString
+        let sz = s.size(withAttributes: attrs)
+        s.draw(at: NSPoint(x: (bounds.width - sz.width) / 2, y: (bounds.height - sz.height) / 2 + 18), withAttributes: attrs)
     }
 }
