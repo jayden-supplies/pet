@@ -163,7 +163,9 @@ struct AgentStateAnimationResult {
     /// watcher's `publish` (0 when no transcript is readable). Drives the XP
     /// bar + evolution — see XPModel. Defaulted so `agentStateAnimation`'s
     /// return sites don't need to thread it through.
-    var totalTokens: Double = 0
+    /// 마지막 폴링 이후 새로 쌓인 토큰. 누적 합계가 아니라 증가분이다 —
+    /// 경험치는 지금 화면에 있는 펫에게만 들어가므로 호출부가 직접 누적한다.
+    var gainedTokens: Double = 0
 }
 
 /// Ported verbatim (in spirit) from `pet-agent-state.ts`'s `agentStateAnimation()`.

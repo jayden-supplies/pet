@@ -83,6 +83,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Live XP state, so re-selecting a pet re-derives the right evolved form.
     private var currentStage = 0
     private var currentPercent: Double = 0
+
+    /// 펫별 누적 경험치(토큰). 그 펫이 화면에 있는 동안 발생한 토큰만 들어간다.
+    private var petTokens: [String: Double] = [:]
+    /// 폴링마다 UserDefaults 에 쓰면 초당 몇 번씩 디스크를 건드린다. 값은 메모리에
+    /// 두고 주기적으로만 내려쓰고, 종료 시 한 번 더 확실히 쓴다.
+    private var tokenSaveTimer: Timer?
     private var currentDisplaySlug = ""
     private var sheetCache: [String: SpriteSheet] = [:]
 
@@ -128,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.setBarAlwaysVisible(barAlwaysVisible)
         evolutionThresholds = Self.savedEvolutionThresholds(fallback: XPModel.stageThresholds)
         evolutionEnabled = Self.savedEvolutionEnabled(fallback: false)
+        petTokens = Self.savedPetTokens()
         view.onRequestWindowMove = { [weak win, weak self] newOrigin in
             win?.setFrameOrigin(newOrigin)
             Self.saveOrigin(newOrigin)
@@ -451,7 +458,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func selectPet(_ sender: NSMenuItem) {
         guard let slug = sender.representedObject as? String, slug != selectedPetSlug else { return }
+        // 펫을 바꾸기 전에 지금까지 쌓인 값을 확정해 둔다. 주기 저장만 믿으면
+        // 전환 직전 몇 초치가 날아간다.
+        tokenSaveTimer?.invalidate(); tokenSaveTimer = nil
+        savePetTokens()
+
         selectedPetSlug = slug
+        // 펫마다 경험치가 다르므로 막대와 진화 단계를 그 펫 기준으로 다시 잡는다.
+        currentPercent = XPModel.percent(tokens: petTokens[slug] ?? 0)
+        applyStage()
 
         Self.savePetSlug(slug)
         // Re-derive the shown form from the new base + current XP stage (so
@@ -480,11 +495,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher = newWatcher
     }
 
+    // MARK: - 펫별 경험치 저장
+
+    private static let petTokensDefaultsKey = "petTokens"
+
+    private func scheduleTokenSave() {
+        guard tokenSaveTimer == nil else { return }
+        tokenSaveTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: false) { [weak self] _ in
+            self?.tokenSaveTimer = nil
+            self?.savePetTokens()
+        }
+    }
+
+    private func savePetTokens() {
+        UserDefaults.standard.set(petTokens, forKey: Self.petTokensDefaultsKey)
+    }
+
+    private static func savedPetTokens() -> [String: Double] {
+        (UserDefaults.standard.dictionary(forKey: petTokensDefaultsKey) as? [String: Double]) ?? [:]
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        tokenSaveTimer?.invalidate()
+        savePetTokens()
+    }
+
     // MARK: - Live update: animation + XP bar + evolution
 
     private func applyUpdate(_ result: AgentStateAnimationResult) {
         petView?.setBaseAnimation(result.animation)
-        currentPercent = XPModel.percent(tokens: result.totalTokens)
+        // 새로 쌓인 토큰은 **지금 화면에 있는 펫**에게만 들어간다. 그래서 펫마다
+        // 경험치가 따로 쌓이고, 진화도 따로 진행된다.
+        if result.gainedTokens > 0 {
+            petTokens[selectedPetSlug, default: 0] += result.gainedTokens
+            scheduleTokenSave()
+            if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
+                let t = Int(petTokens[selectedPetSlug] ?? 0)
+                FileHandle.standardError.write("[connor-pet] XP \(selectedPetSlug) 누적=\(t)\n".data(using: .utf8)!)
+            }
+        }
+        currentPercent = XPModel.percent(tokens: petTokens[selectedPetSlug] ?? 0)
         applyStage()
     }
 
@@ -508,6 +558,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let slug = displaySlug(base: selectedPetSlug, stage: currentStage)
         guard slug != currentDisplaySlug, let sheet = cachedSheet(slug: slug) else { return }
         currentDisplaySlug = slug
+        if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
+            let t = Int(petTokens[selectedPetSlug] ?? 0)
+            FileHandle.standardError.write("[connor-pet] 표시 \(slug)  (기준 \(selectedPetSlug), 단계 \(currentStage), XP \(t))\n".data(using: .utf8)!)
+        }
 
         // 프레임 크기가 다른 펫으로 바뀌면 창도 같이 커지거나 작아져야 한다. 중심을
         // 유지해서 바꾸면 펫이 제자리에 있는 것처럼 보인다. 여기가 시트를 갈아 끼우는
