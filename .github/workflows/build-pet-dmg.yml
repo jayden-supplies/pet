@@ -1,0 +1,111 @@
+name: Build Pet DMG
+
+# 메뉴바 펫 앱(ConnorPet/)을 base pet 하나만 골라서 .dmg로 빌드하는 수동 파이프라인.
+# ConnorPet은 SwiftPM 실행 파일(swift build -c release)로만 빌드되고, 지금까지 .app
+# 번들/dmg 생성 과정이 없었어서 이 워크플로우에서 그 자리를 대신 채운다.
+on:
+  workflow_dispatch:
+    inputs:
+      pet:
+        description: '빌드할 base pet (진화형은 자동으로 함께 포함됨)'
+        required: true
+        type: choice
+        default: totodile
+        options:
+          - totodile
+          - ditto
+          - charmander
+          - squirtle
+          - geodude
+          - eevee
+          - chikorita
+          - torchic
+
+permissions:
+  contents: read
+
+jobs:
+  build-dmg:
+    runs-on: macos-latest
+    env:
+      PET_SLUG: ${{ inputs.pet }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive app display name
+        id: pet
+        run: |
+          # totodile -> Totodile (.app/.dmg 이름과 CFBundleName에 사용)
+          NAME="$(printf '%s' "${PET_SLUG:0:1}" | tr '[:lower:]' '[:upper:]')${PET_SLUG:1}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Patch availablePetSlugs to the selected pet only
+        run: |
+          # 저장소 원본 파일이 아니라 이 러너의 체크아웃 사본만 고치는 것이라 커밋되지 않음.
+          # Resources/pets 전체가 리소스 번들로 그대로 복사되므로(Package.swift 참고),
+          # 선택한 base pet의 진화형 스프라이트도 이 시점에 이미 함께 포함되어 있다 —
+          # 별도로 진화형 리소스를 추려 넣을 필요가 없다.
+          sed -i '' "s/private static let availablePetSlugs = \[.*\]/private static let availablePetSlugs = [\"$PET_SLUG\"]/" ConnorPet/Sources/ConnorPet/AppDelegate.swift
+          grep -n 'availablePetSlugs =' ConnorPet/Sources/ConnorPet/AppDelegate.swift
+
+      - name: Build (release)
+        run: |
+          cd ConnorPet
+          swift build -c release
+
+      - name: Assemble .app bundle
+        env:
+          PET_NAME: ${{ steps.pet.outputs.name }}
+        run: |
+          cd ConnorPet
+          APP="$PET_NAME.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp .build/release/ConnorPet "$APP/Contents/MacOS/ConnorPet"
+          cp -R .build/release/ConnorPet_ConnorPet.bundle "$APP/Contents/Resources/"
+
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>ConnorPet</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.connor.$PET_SLUG-pet</string>
+              <key>CFBundleName</key>
+              <string>$PET_NAME</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
+              <key>LSUIElement</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Create dmg
+        env:
+          PET_NAME: ${{ steps.pet.outputs.name }}
+        run: |
+          cd ConnorPet
+          hdiutil create -volname "$PET_NAME Pet" -srcfolder "$PET_NAME.app" -ov -format UDZO "$PET_NAME.dmg"
+
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pet.outputs.name }}-pet-dmg
+          path: ConnorPet/${{ steps.pet.outputs.name }}.dmg
+
+      - name: Job summary
+        env:
+          PET_NAME: ${{ steps.pet.outputs.name }}
+        run: |
+          {
+            echo "## $PET_NAME Pet.dmg"
+            echo ""
+            echo "코드서명/공증(notarization) 없이 빌드했습니다. 처음 실행 시 macOS Gatekeeper 경고가 뜰 수 있으니, dmg를 마운트한 뒤 우클릭(또는 Control-클릭) → \"열기\"로 실행하세요."
+          } >> "$GITHUB_STEP_SUMMARY"
