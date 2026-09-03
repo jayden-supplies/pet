@@ -329,8 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.battleWindow = nil
         }
         battleWindow = win
-        NSApp.activate(ignoringOtherApps: true)
-        win.makeKeyAndOrderFront(nil)
+        win.present() // click-through overlay: show without activating/stealing focus
         view.start()
     }
 

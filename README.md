@@ -184,13 +184,13 @@ Orca의 훅 서버는 열려있는 모든 에이전트 패널의 상태를 250ms
 같은 Wi-Fi에 이 앱을 켜둔 사람끼리 **1:1 대전**을 할 수 있습니다 — 디지몬 다마고치처럼 대전 신청 → 상대가 수락 → 양쪽이 동시에 같은 대전 화면을 봅니다.
 
 - 메뉴바 아이콘 → **대전** 서브메뉴에 같은 Wi-Fi에서 실행 중인 다른 앱들이 뜹니다 (없으면 "주변에 상대가 없어요").
-- 상대를 고르면 그쪽에 **수락/거절** 창이 뜨고, 수락하면 양쪽에서 대전 창이 열려 두 펫이 마주 보고 발사체를 주고받으며 HP를 깎다가 **WIN!/LOSE**로 승패를 보여줍니다.
+- 상대를 고르면 그쪽에 **수락/거절** 창이 뜨고, 수락하면 양쪽 화면에 **풀스크린 투명 오버레이**가 떠서(클릭은 아래로 통과) 두 펫이 화면 좌우 끝(서로 다른 공간)에 서고, **불꽃 발사체**(CAEmitterLayer)가 화면을 가로질러 날아갑니다. 방어자는 가끔 **회피**(뒤돌아 백홉)해서 발사체가 화면 밖으로 지나가고, HP를 다 깎으면 **WIN!/LOSE**로 승패를 보여줍니다.
 
 서버가 필요 없습니다. Apple의 **Network.framework**만 씁니다:
 
 - **발견**: 각 앱이 `_connorpet._tcp` Bonjour 서비스를 광고(`NWListener`)하고 동시에 탐색(`NWBrowser`)합니다. TXT 레코드에 인스턴스 UUID·표시 이름·펫 슬러그를 실어, 자기 자신은 걸러내고 상대의 캐릭터까지 그대로 그립니다.
 - **핸드셰이크**: 신청/수락/거절은 하나의 TCP 연결(`NWConnection`) 위에서 length-prefixed JSON으로 주고받습니다 (`BattleService.swift`).
-- **결정론적 대전**: 수락하는 쪽이 랜덤 `seed` 하나를 정해 보내면, **양쪽이 그 seed로 똑같은 시뮬레이션**(`BattleSimulation.swift`)을 돌려 동일한 라운드·승패를 계산합니다. 프레임 단위 동기화가 필요 없어서(서로 믿을 필요도 없이) 양쪽 화면이 정확히 같은 결과를 냅니다. 역할(신청자=challenger / 수락자=accepter)이 고정이라 누가 어느 쪽에 서는지도 양쪽이 일치합니다.
+- **결정론적 대전**: 수락하는 쪽이 랜덤 `seed` 하나를 정해 보내면, **양쪽이 그 seed로 똑같은 시뮬레이션**(`BattleSimulation.swift`)을 돌려 동일한 라운드·명중/회피·승패를 계산합니다. 프레임 단위 동기화가 필요 없어서(서로 믿을 필요도 없이) 양쪽 화면이 정확히 같은 결과를 냅니다. 역할(신청자=challenger / 수락자=accepter)이 고정이라 누가 어느 쪽에 서는지도 양쪽이 일치합니다. 승패 난수는 **직접 구현한 seed 고정 정수 PRNG**를 씁니다 — 표준 `random(in:using:)`이나 GameplayKit은 Swift 버전·기기 간 결과가 달라질 수 있어(문서로 확인) 락스텝 대전엔 부적합하기 때문입니다.
 
 > **네트워크 주의**: 게스트/회사 Wi-Fi 중 "클라이언트 격리(AP isolation)"가 켜진 곳에서는 같은 네트워크라도 기기끼리 서로 못 봅니다. 그럴 땐 집 Wi-Fi나 핫스팟에서 테스트하세요. macOS 15(Sequoia)부터는 로컬 네트워크 접근 권한 팝업이 뜰 수 있습니다(허용해야 발견됩니다).
 
@@ -302,8 +302,8 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
     PetView.swift                프레임 렌더링, 호버/드래그/클릭/우클릭 모션 메뉴, 펫 아래 경험치 바 그리기
     PetWindow.swift               테두리 없는 투명, 항상 위에 뜨는 NSWindow
     BattleService.swift            같은 wifi 발견(Bonjour, NWListener/NWBrowser) + 대전 신청/수락 핸드셰이크
-    BattleSimulation.swift         seed 하나로 양쪽이 똑같이 계산하는 결정론적 대전 시뮬레이션
-    BattleWindow.swift             1:1 대전 화면 (두 펫이 마주 보고 발사체 교환 + HP + WIN/LOSE)
+    BattleSimulation.swift         seed 하나로 양쪽이 똑같이 계산하는 결정론적 대전 시뮬레이션(명중/회피 포함)
+    BattleWindow.swift             풀스크린 투명 오버레이 대전 화면 (불꽃 발사체 CAEmitterLayer + 회피 + HP + WIN/LOSE)
     BattleSelfTest.swift           CONNORPET_SELFTEST=battle 로 도는 헤드리스 핸드셰이크 검증
     SessionBrief.swift             ~/.claude/projects 트랜스크립트에서 최근 세션 진행상황 추출
     BriefingSummarizer.swift        claude CLI 로 진행상황을 요약 (캐시 + 백그라운드 갱신)
