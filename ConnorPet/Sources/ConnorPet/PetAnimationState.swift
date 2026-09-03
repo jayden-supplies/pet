@@ -18,7 +18,17 @@ enum PetAnimationName: String, CaseIterable {
 
     /// 속성기인가 — 한 펫에 최대 하나뿐이고, 브리핑 체크포인트를 찍는다.
     var isSkill: Bool {
-        self == .fireBreath || self == .waterGun
+        skillNoun != nil
+    }
+
+    /// 브리핑 문구에 쓰는 한 글자 이름. "불 뿜은 뒤로…" / "물 뿜은 뒤로…" 처럼
+    /// 지금 그 펫이 쓴 기술에 맞춰 말하기 위한 것이다. 속성기가 아니면 nil.
+    var skillNoun: String? {
+        switch self {
+        case .fireBreath: return "불"
+        case .waterGun:   return "물"
+        default:          return nil
+        }
     }
 
     /// 우클릭 메뉴에서 고정 재생이 아니라 **한 번 실행되는 동작**인 모션과, 메뉴가
