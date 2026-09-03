@@ -93,8 +93,11 @@ final class BattleView: NSView {
     // Timing (seconds) — deliberately slow so the projectile is easy to follow
     // as it crosses the whole screen.
     private let introDuration: TimeInterval = 1.3
-    private let roundDuration: TimeInterval = 1.5
-    private let hitFraction: TimeInterval = 0.78 // when in a round a *hit* projectile connects
+    // One clear turn per round: the attacker winds up, fires, the shot crosses,
+    // the defender reacts, then a beat of calm before the *other* pet's turn.
+    private let roundDuration: TimeInterval = 1.7
+    private let windupFraction: TimeInterval = 0.14 // attacker lunges before the shot leaves
+    private let hitFraction: TimeInterval = 0.62     // when a *hit* projectile connects
 
     init(mySheet: SpriteSheet, oppSheet: SpriteSheet, myName: String, oppName: String, myRole: BattleRole, outcome: BattleOutcome) {
         self.mySheet = mySheet
@@ -202,7 +205,8 @@ final class BattleView: NSView {
 
     private var elapsed: TimeInterval { Date().timeIntervalSinceReferenceDate - startTime }
     private var battleEnd: TimeInterval { introDuration + Double(outcome.rounds.count) * roundDuration }
-    private var snapshotDone = false
+    private var burstIndex = 0
+    private var nextBurstAt: TimeInterval = 0
 
     private func tick() {
         if !finished && elapsed >= battleEnd {
@@ -214,17 +218,25 @@ final class BattleView: NSView {
         maybeCaptureSnapshot()
     }
 
-    // Test hook: once the battle is well underway, render this view to a PNG at
-    // CONNORPET_BATTLE_SNAPSHOT so a headless run can verify the rendering.
+    // Test hook: with CONNORPET_BATTLE_SNAPSHOT set, dump a *burst* of frames
+    // (`<stem>_NN.png`) every 0.3s. `cacheDisplay` renders only THIS instance's
+    // own overlay — never another running copy's — so the burst shows one
+    // machine's clean turn-by-turn view for headless verification.
     private func maybeCaptureSnapshot() {
-        guard !snapshotDone, elapsed > introDuration + roundDuration * 0.4,
-              let path = ProcessInfo.processInfo.environment["CONNORPET_BATTLE_SNAPSHOT"] else { return }
-        snapshotDone = true
+        guard let path = ProcessInfo.processInfo.environment["CONNORPET_BATTLE_SNAPSHOT"],
+              elapsed >= nextBurstAt, burstIndex <= 30 else { return }
+        nextBurstAt = elapsed + 0.3
+        let url = URL(fileURLWithPath: path)
+        let dir = url.deletingLastPathComponent()
+        let stem = url.deletingPathExtension().lastPathComponent
+        let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension
+        let outURL = dir.appendingPathComponent(String(format: "%@_%02d.%@", stem, burstIndex, ext))
+        burstIndex += 1
         display()
         guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return }
         cacheDisplay(in: bounds, to: rep)
         if let data = rep.representation(using: .png, properties: [:]) {
-            try? data.write(to: URL(fileURLWithPath: path))
+            try? data.write(to: outURL)
         }
     }
 
@@ -263,9 +275,11 @@ final class BattleView: NSView {
         let oppHP = myIsChallenger ? hp.accepter : hp.challenger
 
         // Defender reactions: a landing hit flashes+shakes them; a dodge turns
-        // them away and hops them back around the moment the shot arrives.
+        // them away and hops them back around the moment the shot arrives. The
+        // attacker jabs forward as it fires so it's obvious whose turn it is.
         var myFlash = false, oppFlash = false
         var myDodge: CGFloat = 0, oppDodge: CGFloat = 0   // 0…1 dodge amount
+        var myLunge: CGFloat = 0, oppLunge: CGFloat = 0   // attacker forward jab (px)
         if inRound {
             let defenderIsMe = !attackerIsMe
             if dodged {
@@ -275,14 +289,16 @@ final class BattleView: NSView {
             } else if roundProgress >= hitFraction && roundProgress < hitFraction + 0.2 {
                 if defenderIsMe { myFlash = true } else { oppFlash = true }
             }
+            let lunge = attackLunge(progress: roundProgress) * (petSize * 0.16)
+            if attackerIsMe { myLunge = lunge } else { oppLunge = lunge }
         }
 
         // Pets: left = me facing right; right = opponent facing left (flipped).
         // A dodging pet flips to face away and hops backward (away from center).
         drawPet(myPose, center: leftCenter, baseFlipped: false,
-                dodge: myDodge, awaySign: -1, flash: myFlash)
+                dodge: myDodge, awaySign: -1, lunge: myLunge, flash: myFlash)
         drawPet(oppPose, center: rightCenter, baseFlipped: true,
-                dodge: oppDodge, awaySign: +1, flash: oppFlash)
+                dodge: oppDodge, awaySign: +1, lunge: oppLunge, flash: oppFlash)
 
         // Projectile + flame.
         drawProjectile(roundIndex: roundIndex, inRound: inRound, attackerIsMe: attackerIsMe,
@@ -310,6 +326,14 @@ final class BattleView: NSView {
         return CGFloat(sin((progress - lo) / (hi - lo) * .pi))
     }
 
+    /// Quick out-and-back jab the attacker does as it fires (0→1→0), so it reads
+    /// as clearly *this* pet's turn.
+    private func attackLunge(progress: Double) -> CGFloat {
+        let hi = windupFraction + 0.24
+        guard progress >= 0, progress <= hi else { return 0 }
+        return CGFloat(sin(progress / hi * .pi))
+    }
+
     private func drawBackground() {
         // Semi-transparent arena: dark enough to read HP/pets, sheer enough that
         // the desktop shows through — reinforcing "the pets are out in your space".
@@ -328,7 +352,7 @@ final class BattleView: NSView {
     }
 
     private func drawPet(_ frames: SpriteAnimationFrames?, center: CGPoint, baseFlipped: Bool,
-                         dodge: CGFloat, awaySign: CGFloat, flash: Bool) {
+                         dodge: CGFloat, awaySign: CGFloat, lunge: CGFloat, flash: Bool) {
         guard let frames, !frames.images.isEmpty else { return }
         // Cycle pose frames by wall-clock using their declared durations.
         let totalMs = frames.durationsMs.reduce(0, +)
@@ -343,10 +367,12 @@ final class BattleView: NSView {
         let image = frames.images[min(index, frames.images.count - 1)]
 
         // Dodging: hop backward (away from center) and turn to face away.
+        // Attacking: jab forward (toward center = opposite of "away").
         let hopX = awaySign * dodge * (petSize * 0.22)
         let hopY = dodge * (petSize * 0.10)
+        let lungeX = -awaySign * lunge
         let flipped = dodge > 0.5 ? !baseFlipped : baseFlipped
-        let cx = center.x + hopX
+        let cx = center.x + hopX + lungeX
         let cy = center.y + hopY
         let rect = NSRect(x: cx - petSize / 2, y: cy - petSize / 2, width: petSize, height: petSize)
 
@@ -376,16 +402,21 @@ final class BattleView: NSView {
         let fromX = attackerIsMe ? leftCenter.x + petSize * 0.30 : rightCenter.x - petSize * 0.30
         let defenderFrontX = attackerIsMe ? rightCenter.x - petSize * 0.30 : leftCenter.x + petSize * 0.30
 
+        // The shot only leaves the muzzle after the attacker's wind-up.
+        guard roundProgress >= windupFraction else { updateEmitter(active: false, at: .zero); return }
+        let flight = 1.0 - windupFraction
+
         let x: CGFloat
         let visible: Bool
         if dodged {
-            // Fly the whole round from muzzle past the defender to off-screen.
+            // Fly from muzzle past the defender to off-screen over the rest of the turn.
             let offX: CGFloat = attackerIsMe ? bounds.width + 100 : -100
-            x = fromX + (offX - fromX) * CGFloat(roundProgress)
+            let p = (roundProgress - windupFraction) / flight
+            x = fromX + (offX - fromX) * CGFloat(p)
             visible = true
         } else {
-            // Fly to the defender over [0, hitFraction], then it's spent.
-            let frac = min(roundProgress / hitFraction, 1.0)
+            // Fly to the defender over [windup, hitFraction], then it's spent.
+            let frac = min((roundProgress - windupFraction) / (hitFraction - windupFraction), 1.0)
             x = fromX + (defenderFrontX - fromX) * CGFloat(frac)
             visible = roundProgress < hitFraction
         }
