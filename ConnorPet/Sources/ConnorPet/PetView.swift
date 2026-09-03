@@ -34,7 +34,35 @@ final class PetView: NSView {
     private var dragOffset: CGPoint = .zero
     private var didDragThisGesture = false
 
+    /// Set while the pet is delivering a briefing — outranks hover so the
+    /// pointer sitting on the pet (which it always is, right after a click)
+    /// does not replace the waving motion with the hover jump.
+    private var speaking = false
+    private var speakingTimer: Timer?
+
+    /// Motion pinned from the right-click menu. While set it overrides the
+    /// agent state entirely, so any motion can be inspected on demand; picking
+    /// "자동" clears it and hands control back to the live status.
+    private var pinnedAnimation: PetAnimationName?
+
+    /// 한 바퀴만 돌고 스스로 물러나는 모션(불뿜기). 고정(pin)과 달리 끝나면
+    /// 원래 상태로 돌아간다 — 체크포인트 동작이라 계속 뿜고 있으면 곤란하다.
+    private var oneShotAnimation: PetAnimationName?
+
+    /// 속성기가 실제로 재생됐을 때. 호출부가 시각을 기록한다.
+    var onSkillUsed: (() -> Void)?
+
+    /// 속성기 프레임이 바뀔 때마다 호출된다. 매니페스트 좌표(프레임 기준)를
+    /// 그대로 넘기고, 화면 좌표 환산과 그리기는 호출부가 한다.
+    /// grow 가 0 이면 이번 프레임에는 이펙트가 없다.
+    var onFlameFrame: ((_ mouthInFrame: CGPoint, _ grow: CGFloat) -> Void)?
+
     var onRequestWindowMove: ((_ screenOrigin: CGPoint) -> Void)?
+    /// Left click (not a drag). The delegate returns the text to say, or nil
+    /// to stay quiet.
+    var onClick: (() -> String?)?
+    var onSpeak: ((_ text: String, _ duration: TimeInterval) -> Void)?
+    var onSilence: (() -> Void)?
     /// Fires once each time the pointer enters the pet — the "you noticed it"
     /// gesture AppDelegate uses to dismiss a lingering review/헤롱헤롱 state.
     var onHoverEnter: (() -> Void)?
@@ -91,6 +119,9 @@ final class PetView: NSView {
 
     /// Switches the rendered character (e.g. via the menu-bar picker) while
     /// preserving live interaction state (hover/drag/base status animation).
+    /// 현재 재생 중인 시트. 호출부가 매니페스트(프레임 크기 등)를 읽는다.
+    var currentSpriteSheet: SpriteSheet { spriteSheet }
+
     func setSpriteSheet(_ newSheet: SpriteSheet) {
         spriteSheet = newSheet
         currentAnimationKey = nil // force applyDisplayAnimation to restart from frame 0
@@ -104,13 +135,127 @@ final class PetView: NSView {
             switch dragDirection {
             case .right: return .runningRight
             case .left: return .runningLeft
-            case nil: return baseAnimation
+            case nil: return pinnedAnimation ?? baseAnimation
             }
+        }
+        if let oneShot = oneShotAnimation {
+            return oneShot
+        }
+        if let pinned = pinnedAnimation {
+            return pinned
+        }
+        if speaking {
+            return .waving
         }
         if hovering {
             return .jumping
         }
         return baseAnimation
+    }
+
+    // MARK: - Speaking
+
+    /// 브리핑 말풍선이 떠 있는 시간. 여러 세션을 훑어 읽을 수 있어야 한다.
+    static let briefingDuration: TimeInterval = 30
+
+    private func speak(_ text: String) {
+        let duration = Self.briefingDuration
+        speaking = true
+        applyDisplayAnimation()
+        onSpeak?(text, duration)
+
+        speakingTimer?.invalidate()
+        speakingTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+            self?.speaking = false
+            self?.applyDisplayAnimation()
+        }
+    }
+
+    private func stopSpeaking() {
+        speakingTimer?.invalidate()
+        speakingTimer = nil
+        guard speaking else { return }
+        speaking = false
+        onSilence?()
+        applyDisplayAnimation()
+    }
+
+    // MARK: - Right-click motion menu
+
+    override func rightMouseDown(with event: NSEvent) {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "모션", action: nil, keyEquivalent: "").isEnabled = false
+
+        let auto = NSMenuItem(title: "자동 (에이전트 상태 따르기)", action: #selector(pinMotion(_:)), keyEquivalent: "")
+        auto.target = self
+        auto.representedObject = nil as String?
+        auto.state = pinnedAnimation == nil ? .on : .off
+        menu.addItem(auto)
+        menu.addItem(.separator())
+
+        for name in PetAnimationName.allCases {
+            // 단축키가 붙은 모션은 고정이 아니라 그 자리에서 한 번 실행되는 동작이다.
+            let shortcut = name.menuShortcut
+            let action: Selector
+            switch name {
+            case _ where name.isSkill: action = #selector(useSkill(_:))
+            case .waving:              action = #selector(speakBriefing(_:))
+            default:                   action = #selector(pinMotion(_:))
+            }
+            let item = NSMenuItem(title: name.koreanLabel, action: action,
+                                  keyEquivalent: shortcut ?? "")
+            if shortcut != nil {
+                // 기본값이 ⌘ 라서 비워야 글자 단독으로 먹는다.
+                item.keyEquivalentModifierMask = []
+            }
+            item.target = self
+            item.representedObject = name.rawValue
+            item.state = (shortcut == nil && pinnedAnimation == name) ? .on : .off
+            // A motion with no row in this pet's manifest cannot be played.
+            item.isEnabled = spriteSheet.animation(named: name.rawValue) != nil
+            menu.addItem(item)
+        }
+
+        // 종료. 지금까지는 메뉴바 아이콘에서만 끌 수 있었는데, 펫이 눈앞에 있는데
+        // 메뉴바까지 올라가야 하는 게 번거롭다.
+        //
+        // 단축키는 일부러 안 붙였다. 메뉴가 열린 상태에서 글자 키가 그대로 먹으므로
+        // (a·s 가 그렇게 동작한다) 종료에까지 달면 오타 한 번에 앱이 꺼진다.
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "나가", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        quit.target = NSApp
+        menu.addItem(quit)
+
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    /// 좌클릭과 같은 동작 — 브리핑을 말한다. 좌클릭이 펫을 맞춰야 하는 반면
+    /// 이쪽은 메뉴에서 s 로 바로 부를 수 있다.
+    @objc private func speakBriefing(_ sender: NSMenuItem) {
+        pinnedAnimation = nil
+        stopSpeaking()
+        if let text = onClick?(), !text.isEmpty {
+            speak(text)
+        }
+    }
+
+    @objc private func useSkill(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let name = PetAnimationName(rawValue: raw) else { return }
+        pinnedAnimation = nil
+        if playOnce(name) {
+            onSkillUsed?()
+        }
+    }
+
+    @objc private func pinMotion(_ sender: NSMenuItem) {
+        stopSpeaking()
+        if let raw = sender.representedObject as? String {
+            pinnedAnimation = PetAnimationName(rawValue: raw)
+        } else {
+            pinnedAnimation = nil
+        }
+        applyDisplayAnimation()
     }
 
     private func applyDisplayAnimation() {
@@ -127,6 +272,7 @@ final class PetView: NSView {
             frameIndex = 0
             scheduleNextFrame()
             needsDisplay = true
+            publishFlameState()
         }
     }
 
@@ -141,8 +287,18 @@ final class PetView: NSView {
 
     private func advanceFrame() {
         guard let frames = currentFrames, !frames.images.isEmpty else { return }
-        frameIndex = (frameIndex + 1) % frames.images.count
+        let next = frameIndex + 1
+        // 1회 재생 모션은 마지막 프레임에서 멈추고 원래 상태로 돌아간다.
+        if oneShotAnimation != nil, next >= frames.images.count {
+            oneShotAnimation = nil
+            onFlameFrame?(.zero, 0)
+            currentAnimationKey = nil // 다음 모션을 0프레임부터 다시 시작시킨다
+            applyDisplayAnimation()
+            return
+        }
+        frameIndex = next % frames.images.count
         needsDisplay = true
+        publishFlameState()
         scheduleNextFrame()
     }
 
@@ -150,6 +306,31 @@ final class PetView: NSView {
     /// strip reserved along the bottom.
     private var spriteRect: NSRect {
         NSRect(x: 0, y: Self.barAreaHeight, width: bounds.width, height: bounds.height - Self.barAreaHeight)
+    }
+
+    /// 모션을 한 바퀴만 재생한다. 이 펫에 그 행이 없으면 아무것도 하지 않는다.
+    @discardableResult
+    func playOnce(_ name: PetAnimationName) -> Bool {
+        guard spriteSheet.animation(named: name.rawValue) != nil else { return false }
+        stopSpeaking()
+        oneShotAnimation = name
+        currentAnimationKey = nil
+        applyDisplayAnimation()
+        return true
+    }
+
+    /// 지금 재생 중인 프레임에 맞는 불길 상태를 호출부에 알린다.
+    private func publishFlameState() {
+        guard let skill = spriteSheet.manifest.skill,
+              oneShotAnimation?.rawValue == skill.row,
+              case let track = skill.mouthByFrame,
+              track.indices.contains(frameIndex)
+        else {
+            onFlameFrame?(.zero, 0)
+            return
+        }
+        let m = track[frameIndex]
+        onFlameFrame?(CGPoint(x: m.x, y: m.y), CGFloat(m.grow))
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -270,8 +451,20 @@ final class PetView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        let wasClick = !didDragThisGesture
         dragging = false
         dragDirection = nil
+
+        if wasClick {
+            // A second click while talking dismisses the bubble instead of
+            // restarting it — otherwise the pet cannot be told to be quiet.
+            if speaking {
+                stopSpeaking()
+            } else if let text = onClick?(), !text.isEmpty {
+                speak(text)
+                return
+            }
+        }
         applyDisplayAnimation()
     }
 }
