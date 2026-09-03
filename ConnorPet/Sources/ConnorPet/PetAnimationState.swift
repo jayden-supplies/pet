@@ -14,6 +14,16 @@ enum PetAnimationName: String, CaseIterable {
     case runningRight = "running-right"
     case runningLeft = "running-left"
 
+    /// 우클릭 메뉴에서 고정 재생이 아니라 **한 번 실행되는 동작**인 모션과, 메뉴가
+    /// 열린 상태에서 누를 단축키. 나머지는 골라 두면 그 자세로 고정된다.
+    var menuShortcut: String? {
+        switch self {
+        case .fireBreath: return "a"
+        case .waving:     return "s"
+        default:          return nil
+        }
+    }
+
     /// Korean label for the right-click motion menu.
     ///
     /// 이름은 상태가 아니라 **눈에 보이는 동작**을 가리킨다. running 계열 세 개는
@@ -27,7 +37,7 @@ enum PetAnimationName: String, CaseIterable {
         case .waiting:      return "얼음"
         case .review:       return "하트"
         case .jumping:      return "점프"
-        case .waving:       return "말하기"
+        case .waving:       return "말하기 — 클로드 세션 진행상황"
         case .failed:       return "실패"
         case .fireBreath:   return "불뿜기 — 여기까지 정리, 이후 작업만 브리핑"
         case .runningRight: return "오른쪽보기"

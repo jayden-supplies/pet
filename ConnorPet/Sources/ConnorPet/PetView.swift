@@ -163,25 +163,38 @@ final class PetView: NSView {
         menu.addItem(.separator())
 
         for name in PetAnimationName.allCases {
-            // 불뿜기는 고정이 아니라 1회 재생이고, 메뉴가 열린 상태에서 a 로 바로 쏜다.
-            let isOneShot = (name == .fireBreath)
-            let item = NSMenuItem(
-                title: name.koreanLabel,
-                action: isOneShot ? #selector(fireBreath(_:)) : #selector(pinMotion(_:)),
-                keyEquivalent: isOneShot ? "a" : ""
-            )
-            if isOneShot {
-                // 기본값이 ⌘ 라서 비워야 a 단독으로 먹는다.
+            // 단축키가 붙은 모션은 고정이 아니라 그 자리에서 한 번 실행되는 동작이다.
+            let shortcut = name.menuShortcut
+            let action: Selector
+            switch name {
+            case .fireBreath: action = #selector(fireBreath(_:))
+            case .waving:     action = #selector(speakBriefing(_:))
+            default:          action = #selector(pinMotion(_:))
+            }
+            let item = NSMenuItem(title: name.koreanLabel, action: action,
+                                  keyEquivalent: shortcut ?? "")
+            if shortcut != nil {
+                // 기본값이 ⌘ 라서 비워야 글자 단독으로 먹는다.
                 item.keyEquivalentModifierMask = []
             }
             item.target = self
             item.representedObject = name.rawValue
-            item.state = (!isOneShot && pinnedAnimation == name) ? .on : .off
+            item.state = (shortcut == nil && pinnedAnimation == name) ? .on : .off
             // A motion with no row in this pet's manifest cannot be played.
             item.isEnabled = spriteSheet.animation(named: name.rawValue) != nil
             menu.addItem(item)
         }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    /// 좌클릭과 같은 동작 — 브리핑을 말한다. 좌클릭이 펫을 맞춰야 하는 반면
+    /// 이쪽은 메뉴에서 s 로 바로 부를 수 있다.
+    @objc private func speakBriefing(_ sender: NSMenuItem) {
+        pinnedAnimation = nil
+        stopSpeaking()
+        if let text = onClick?(), !text.isEmpty {
+            speak(text)
+        }
     }
 
     @objc private func fireBreath(_ sender: NSMenuItem) {
