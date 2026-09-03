@@ -10,16 +10,16 @@ on:
         description: '빌드할 base pet (진화형은 자동으로 함께 포함됨)'
         required: true
         type: choice
-        default: totodile
+        default: '리아코 (Totodile)'
         options:
-          - totodile
-          - ditto
-          - charmander
-          - squirtle
-          - geodude
-          - eevee
-          - chikorita
-          - torchic
+          - '리아코 (Totodile)'
+          - '메타몽 (Ditto)'
+          - '파이리 (Charmander)'
+          - '꼬부기 (Squirtle)'
+          - '꼬마돌 (Geodude)'
+          - '이브이 (Eevee)'
+          - '치코리타 (Chikorita)'
+          - '아차모 (Torchic)'
 
 permissions:
   contents: read
@@ -28,19 +28,24 @@ jobs:
   build-dmg:
     runs-on: macos-latest
     env:
-      PET_SLUG: ${{ inputs.pet }}
+      PET_LABEL: ${{ inputs.pet }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Derive app display name
+      - name: Resolve pet metadata
         id: pet
         run: |
+          # 드롭다운 라벨 "리아코 (Totodile)"의 괄호 안 영문 slug만 뽑아 소문자로.
+          SLUG="$(printf '%s' "$PET_LABEL" | sed -E 's/.*\(([^)]+)\).*/\1/' | tr '[:upper:]' '[:lower:]')"
           # totodile -> Totodile (.app/.dmg 이름과 CFBundleName에 사용)
-          NAME="$(printf '%s' "${PET_SLUG:0:1}" | tr '[:lower:]' '[:upper:]')${PET_SLUG:1}"
+          NAME="$(printf '%s' "${SLUG:0:1}" | tr '[:lower:]' '[:upper:]')${SLUG:1}"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
       - name: Patch availablePetSlugs to the selected pet only
+        env:
+          PET_SLUG: ${{ steps.pet.outputs.slug }}
         run: |
           # 저장소 원본 파일이 아니라 이 러너의 체크아웃 사본만 고치는 것이라 커밋되지 않음.
           # Resources/pets 전체가 리소스 번들로 그대로 복사되므로(Package.swift 참고),
@@ -56,6 +61,7 @@ jobs:
 
       - name: Assemble .app bundle
         env:
+          PET_SLUG: ${{ steps.pet.outputs.slug }}
           PET_NAME: ${{ steps.pet.outputs.name }}
         run: |
           cd ConnorPet
