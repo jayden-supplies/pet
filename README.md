@@ -239,6 +239,17 @@ swift run
 
 크기는 Orca 자체 기본값(`PET_SIZE_DEFAULT=180`)보다 작게, `90pt`로 맞춰뒀습니다 (`AppDelegate.swift`의 `petSize`). 더 키우거나 줄이고 싶으면 이 값만 바꾸면 됩니다.
 
+## dmg로 빌드해서 배포하기 (GitHub Actions)
+
+`swift run`으로 직접 띄우는 대신, 펫 하나만 골라서 더블클릭으로 설치되는 `.dmg`가 필요하면 `build-pet-dmg.yml` 워크플로우를 씁니다:
+
+1. GitHub 저장소의 **Actions** 탭 → **Build Pet DMG** 워크플로우 선택
+2. **Run workflow** 클릭 → `pet` 드롭다운에서 원하는 base pet(리아코/메타몽/파이리/꼬부기/꼬마돌/이브이/치코리타/아차모 중 하나, slug 기준) 선택 → 실행
+3. macOS 러너가 `AppDelegate.swift`의 `availablePetSlugs`를 (커밋하지 않고, 빌드 시점에만) 고른 펫 하나로 임시 치환한 뒤 `swift build -c release`로 빌드하고, `<Pet>.app`으로 번들링해서 `<Pet>.dmg`를 만듭니다. 진화형 스프라이트는 리소스 번들(`Resources/pets`) 전체가 항상 함께 들어가므로 별도 처리 없이도 진화가 정상 동작합니다.
+4. 실행이 끝나면 해당 워크플로우 실행 화면의 **Artifacts**에서 `<Pet>-pet-dmg`를 다운로드
+
+코드서명/공증(notarization)은 하지 않으므로, dmg를 마운트해서 처음 실행할 때 macOS Gatekeeper 경고가 뜰 수 있습니다 — 우클릭(Control-클릭) → "열기"로 열면 됩니다.
+
 ## 테스트하기 (실제 에이전트 없이)
 
 `scripts/simulate_agent.py`는 **Orca 소스**용입니다 (메뉴에서 소스를 Orca로 바꾼 뒤 사용):
