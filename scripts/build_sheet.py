@@ -129,6 +129,18 @@ PETS = [
             "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
         ),
     },
+    {
+        "slug": "togepi",
+        "dex_id": 175,
+        "out_dir_name": "togepi.codex-pet",
+        "id": "togepi-togepi",
+        "display_name": "토게피 (Togepi)",
+        "description": (
+            "Custom connor-pet build: Togepi / 토게피 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
 ]
 
 
