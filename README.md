@@ -304,6 +304,7 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
     BattleService.swift            같은 wifi 발견(Bonjour, NWListener/NWBrowser) + 대전 신청/수락 핸드셰이크
     BattleSimulation.swift         seed 하나로 양쪽이 똑같이 계산하는 결정론적 대전 시뮬레이션(명중/회피 포함)
     BattleWindow.swift             작은 LCD형 대전 화면 (펫 하나씩, 발사체 화면 밖→화면 전환, 불꽃 CAEmitterLayer + 회피 + HP + WIN/LOSE)
+    BattleChallengeDialog.swift    대전 신청 수락/거절 모달 (NSAlert 대신 커스텀 — 폴더 아이콘 자리에 "BATTLE" 배너 + 초록 수락 버튼)
     BattleSelfTest.swift           CONNORPET_SELFTEST=battle 로 도는 헤드리스 핸드셰이크 검증
     SessionBrief.swift             ~/.claude/projects 트랜스크립트에서 최근 세션 진행상황 추출
     BriefingSummarizer.swift        claude CLI 로 진행상황을 요약 (캐시 + 백그라운드 갱신)

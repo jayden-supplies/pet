@@ -13,6 +13,7 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
   - `Sources/ConnorPet/BattleService.swift` — 같은 wifi 발견(Bonjour, `NWListener`/`NWBrowser`) + 대전 신청/수락 핸드셰이크(length-prefixed JSON over `NWConnection`)
   - `Sources/ConnorPet/BattleSimulation.swift` — seed 하나로 양쪽이 똑같이 계산하는 결정론적 대전 시뮬레이션(명중/회피 포함, 순수 함수). 승패 난수는 직접 구현한 seed 고정 정수 PRNG(`DeterministicRNG`) — 표준 `random(using:)`/GameplayKit은 버전·기기 간 불일치 위험이라 안 씀
   - `Sources/ConnorPet/BattleWindow.swift` — 작은 LCD형 대전 화면(디지몬 다마고치 스타일, 가운데 뜨는 `.nonactivatingPanel`). **한 번에 펫 하나만** 표시(내 펫=왼쪽 끝·오른쪽으로 발사, 상대=오른쪽 끝·왼쪽으로 발사), 발사체가 화면 밖으로 나가면 플래시 컷으로 **화면 전환**해 상대 펫 등장. 불꽃은 `CAEmitterLayer`(additive), 회피는 뒤집기+백홉 + HP + WIN/LOSE
+  - `Sources/ConnorPet/BattleChallengeDialog.swift` — 대전 신청 수락/거절 모달(`BattleDialog`). accessory 앱이라 `NSAlert`이 폴더/앱 아이콘을 띄우는 문제를 피하려고, 커스텀 borderless `NSPanel`(canBecomeKey override)에 **"BATTLE" 배너**(코드로 그린 그라디언트) + 초록 수락 버튼(layer-backed `PillButton`, `bezelColor`은 불안정해서 안 씀)로 직접 그림. `runModal`로 동기 반환
   - `Sources/ConnorPet/BattleSelfTest.swift` — `CONNORPET_SELFTEST=battle swift run`으로 도는 헤드리스 핸드셰이크 검증(한 프로세스에서 A/B 발견→신청→수락→결과 합의까지 확인, `SELFTEST PASS`)
   - `Sources/ConnorPet/AppDelegate.swift` — 앱 연결, 메뉴바 아이콘/펫 선택/소스 선택/경험치 바 토글/진화 사용 토글/진화 % 설정/대전 메뉴 + 경험치%에 따른 진화 스프라이트 교체(`evolutionChains`, 임계치·on-off는 사용자 설정)
   - `Sources/ConnorPet/Resources/pets/<slug>/` — 펫별 `spritesheet.png` + `pet.json` 번들 사본

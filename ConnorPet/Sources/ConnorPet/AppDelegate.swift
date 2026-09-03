@@ -300,13 +300,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // If we're already in / setting up a battle, auto-decline.
         guard battleWindow == nil, !pendingChallengeAlert else { respond(false); return }
         pendingChallengeAlert = true
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "대전 신청"
-        alert.informativeText = "\(fromName)님이 대전을 신청했어요. 수락할까요?"
-        alert.addButton(withTitle: "수락")
-        alert.addButton(withTitle: "거절")
-        let accepted = alert.runModal() == .alertFirstButtonReturn
+        // Custom game-styled modal (a bold "BATTLE" banner instead of NSAlert's
+        // generic folder/app icon) — see BattleChallengeDialog.
+        let accepted = BattleDialog.challenge(fromName: fromName)
         pendingChallengeAlert = false
         respond(accepted)
     }
@@ -334,11 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showInfo(title: String, text: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = text
-        alert.addButton(withTitle: "확인")
-        alert.runModal()
+        BattleDialog.info(title: title, message: text)
     }
 
     /// Builds the "대전" item. Its submenu lists everyone currently discovered on
