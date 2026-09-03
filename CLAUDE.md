@@ -11,8 +11,8 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
   - `Sources/ConnorPet/TokenUsage.swift` — 트랜스크립트 JSONL에서 실제 토큰 사용량 합산(`TranscriptTokenReader`, mtime 캐시) + 토큰→경험치%/진화단계 매핑(`XPModel`)
   - `Sources/ConnorPet/SpriteSheet.swift`, `PetView.swift`(펫 아래 경험치 바 포함), `PetWindow.swift` — 렌더링
   - `Sources/ConnorPet/BattleService.swift` — 같은 wifi 발견(Bonjour, `NWListener`/`NWBrowser`) + 대전 신청/수락 핸드셰이크(length-prefixed JSON over `NWConnection`)
-  - `Sources/ConnorPet/BattleSimulation.swift` — seed 하나로 양쪽이 똑같이 계산하는 결정론적 대전 시뮬레이션(순수 함수)
-  - `Sources/ConnorPet/BattleWindow.swift` — 1:1 대전 화면(두 펫 마주 보고 발사체 교환 + HP + WIN/LOSE)
+  - `Sources/ConnorPet/BattleSimulation.swift` — seed 하나로 양쪽이 똑같이 계산하는 결정론적 대전 시뮬레이션(명중/회피 포함, 순수 함수). 승패 난수는 직접 구현한 seed 고정 정수 PRNG(`DeterministicRNG`) — 표준 `random(using:)`/GameplayKit은 버전·기기 간 불일치 위험이라 안 씀
+  - `Sources/ConnorPet/BattleWindow.swift` — 작은 LCD형 대전 화면(디지몬 다마고치 스타일, 가운데 뜨는 `.nonactivatingPanel`). **한 번에 펫 하나만** 표시(내 펫=왼쪽 끝·오른쪽으로 발사, 상대=오른쪽 끝·왼쪽으로 발사), 발사체가 화면 밖으로 나가면 플래시 컷으로 **화면 전환**해 상대 펫 등장. 불꽃은 `CAEmitterLayer`(additive), 회피는 뒤집기+백홉 + HP + WIN/LOSE
   - `Sources/ConnorPet/BattleSelfTest.swift` — `CONNORPET_SELFTEST=battle swift run`으로 도는 헤드리스 핸드셰이크 검증(한 프로세스에서 A/B 발견→신청→수락→결과 합의까지 확인, `SELFTEST PASS`)
   - `Sources/ConnorPet/AppDelegate.swift` — 앱 연결, 메뉴바 아이콘/펫 선택/소스 선택/경험치 바 토글/진화 사용 토글/진화 % 설정/대전 메뉴 + 경험치%에 따른 진화 스프라이트 교체(`evolutionChains`, 임계치·on-off는 사용자 설정)
   - `Sources/ConnorPet/Resources/pets/<slug>/` — 펫별 `spritesheet.png` + `pet.json` 번들 사본
@@ -50,6 +50,6 @@ UI/동작을 변경했으면 반드시 `swift run`으로 실제 앱을 띄워서
   ```
   README와 실제 동작이 어긋나는 부분(예: 코드에서 바뀐 아이콘·플래그·경로가 README에 옛날 그대로 남아있는 경우)을 발견하면 관련 작업이 아니어도 그 자리에서 같이 고칠 것.
 - **새 포켓몬(펫) 추가 시 GitHub Actions 목록도 같이 갱신**: `AppDelegate.swift`의 `availablePetSlugs`에 슬러그를 추가하면(`scripts/build_sheet.py`의 `PETS`도 함께), `.github/workflows/build-pet-dmg.yml`의 `workflow_dispatch.inputs.pet.options`에도 같은 펫을 `"<한글 이름> (<영문 slug 대문자화>)"` 형식(각 펫 `pet.json`의 `displayName`과 동일한 표기)으로 추가할 것. 둘이 어긋나면 Actions에서 그 펫을 선택할 방법이 없어진다 — 실제로 토게피 추가 때 이 목록을 빠뜨렸던 적이 있음.
-- **브랜치 전략 없음, 항상 main에 push**: 이 저장소는 기능 브랜치/PR 없이 `main` 하나로만 운영한다. 별도 요청이 없는 한 작업이 끝나면 변경사항을 커밋하고 `git push origin main`까지 완료한 뒤 마칠 것.
+- **브랜치 전략: GitHub Flow**: `main`은 항상 배포 가능한 상태로 유지하고, 모든 작업은 `main`에서 분기한 **기능 브랜치**에서 한다. 브랜치 이름은 `feature/<간단한-설명>`(kebab-case) 형식으로 짓는다 (예: `feature/lan-multiplayer-battle`). 작업이 끝나면 그 기능 브랜치를 push하고 `main`으로 향하는 PR을 열어 리뷰 후 병합한다. `main`에 직접 push하지 않는다.
 - **커밋 메시지는 항상 한글로 작성**: 제목/본문 모두 한글로 쓸 것 (`Co-Authored-By:` 트레일러 등 고정 형식 줄은 예외).
-- **`main` 브랜치는 보호 룰셋이 없음**: write 권한이 있는 협업자는 PR/승인 없이 `main`에 직접 push 가능하고, force-push/브랜치 삭제도 막혀있지 않다. 협업자 현황 확인 명령: `gh api repos/pet-egg/pet/collaborators --jq '.[] | {login, permissions}'`. 룰셋 현황 확인 명령: `gh api repos/pet-egg/pet/rulesets`.
+- **`main` 브랜치는 보호 룰셋이 없음**: 룰셋상으로는 write 권한이 있는 협업자가 PR/승인 없이 `main`에 직접 push할 수 있고 force-push/브랜치 삭제도 막혀있지 않지만, **위 브랜치 전략(GitHub Flow)에 따라 직접 push하지 말고 기능 브랜치 + PR로 진행할 것**. 협업자 현황 확인 명령: `gh api repos/pet-egg/pet/collaborators --jq '.[] | {login, permissions}'`. 룰셋 현황 확인 명령: `gh api repos/pet-egg/pet/rulesets`.

@@ -12,10 +12,14 @@ enum BattleRole: String, Codable {
     var opponent: BattleRole { self == .challenger ? .accepter : .challenger }
 }
 
-/// One exchange in the scripted battle: `attacker` fires, dealing `damage`.
+/// One exchange in the scripted battle: `attacker` fires. If `dodged`, the
+/// defender turned away and hopped back — the projectile misses and `damage` is
+/// 0; otherwise it connects for `damage`. Both peers compute the same dodges
+/// from the shared seed, so the miss animation lines up on both screens.
 struct BattleRound: Equatable {
     let attacker: BattleRole
     let damage: Int
+    let dodged: Bool
 }
 
 /// The full deterministic result of one battle. `rounds` is the blow-by-blow
@@ -54,10 +58,12 @@ struct DeterministicRNG {
 }
 
 /// Simulate a full battle from `seed`. Attacker alternates each round (classic
-/// Digimon back-and-forth), damage is 1–2 per hit, both start at `startHP`.
-/// The battle ends the instant one side hits 0 HP, so the last attacker is the
-/// winner. Deterministic: same seed in → same `BattleOutcome` out, on any machine.
-func simulateBattle(seed: UInt64, startHP: Int = 6) -> BattleOutcome {
+/// Digimon back-and-forth). Each shot has a ~25% chance the defender dodges
+/// (turns away, hops back — no damage); otherwise it lands for 1–2. Both start
+/// at `startHP`; the battle ends the instant one side hits 0. A dodge never
+/// ends the battle, so the final round is always a landing hit.
+/// Deterministic: same seed in → same `BattleOutcome` out, on any machine.
+func simulateBattle(seed: UInt64, startHP: Int = 5) -> BattleOutcome {
     var rng = DeterministicRNG(seed: seed)
     var hp: [BattleRole: Int] = [.challenger: startHP, .accepter: startHP]
     var rounds: [BattleRound] = []
@@ -66,16 +72,19 @@ func simulateBattle(seed: UInt64, startHP: Int = 6) -> BattleOutcome {
     var attacker: BattleRole = rng.int(in: 0...1) == 0 ? .challenger : .accepter
 
     // The `< 200` guard is a pure safety net against a logic bug looping forever;
-    // with 1–2 damage on 6 HP a real battle resolves in a handful of rounds.
+    // with 1–2 damage on a few HP a real battle resolves in a handful of rounds.
     while hp[.challenger]! > 0 && hp[.accepter]! > 0 && rounds.count < 200 {
-        let damage = rng.int(in: 1...2)
+        // ~25% dodge — deterministic from the seed so both screens miss together.
+        let dodged = rng.int(in: 0...99) < 25
+        let damage = dodged ? 0 : rng.int(in: 1...2)
         let target = attacker.opponent
-        hp[target]! -= damage
-        rounds.append(BattleRound(attacker: attacker, damage: damage))
+        if !dodged { hp[target]! -= damage }
+        rounds.append(BattleRound(attacker: attacker, damage: damage, dodged: dodged))
         attacker = target
     }
 
-    // Whoever landed the final blow wins. (rounds is never empty: startHP >= 1.)
-    let winner = rounds.last?.attacker ?? .challenger
+    // Winner is simply whoever still has HP left (exactly one side can hit 0,
+    // since only the defender takes damage each round).
+    let winner: BattleRole = hp[.challenger]! <= 0 ? .accepter : .challenger
     return BattleOutcome(rounds: rounds, winner: winner, startHP: startHP)
 }
