@@ -4,8 +4,8 @@
   "description": "Custom connor-pet build (evolved form): 거북왕 (Blastoise) reacts to live Orca/Claude Code agent status, skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, nothing=Sleep, working=running. Built from PokeAPI gen5 battle sprites.",
   "spritesheetPath": "spritesheet.png",
   "frame": {
-    "width": 480,
-    "height": 480
+    "width": 400,
+    "height": 400
   },
   "fps": 6,
   "defaultAnimation": "idle",
@@ -184,53 +184,53 @@
     "effect": "water_jet.png",
     "mouthByFrame": [
       {
-        "x": 170,
-        "y": 205,
+        "x": 130,
+        "y": 165,
         "grow": 0.0
       },
       {
-        "x": 180,
-        "y": 205,
+        "x": 134,
+        "y": 165,
         "grow": 0.0
       },
       {
-        "x": 190,
-        "y": 205,
+        "x": 137,
+        "y": 165,
         "grow": 0.0
       },
       {
-        "x": 204,
-        "y": 205,
+        "x": 142,
+        "y": 165,
         "grow": 0.45
       },
       {
-        "x": 210,
-        "y": 205,
+        "x": 144,
+        "y": 165,
         "grow": 0.588
       },
       {
-        "x": 217,
-        "y": 205,
+        "x": 146,
+        "y": 165,
         "grow": 0.725
       },
       {
-        "x": 224,
-        "y": 205,
+        "x": 149,
+        "y": 165,
         "grow": 0.863
       },
       {
-        "x": 231,
-        "y": 205,
+        "x": 151,
+        "y": 165,
         "grow": 1.0
       },
       {
-        "x": 188,
-        "y": 205,
+        "x": 136,
+        "y": 165,
         "grow": 0.0
       },
       {
-        "x": 170,
-        "y": 205,
+        "x": 130,
+        "y": 165,
         "grow": 0.0
       }
     ]

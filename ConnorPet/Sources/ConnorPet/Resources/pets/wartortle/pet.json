@@ -4,8 +4,8 @@
   "description": "Custom connor-pet build (evolved form): 어니부기 (Wartortle) reacts to live Orca/Claude Code agent status, skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, nothing=Sleep, working=running. Built from PokeAPI gen5 battle sprites.",
   "spritesheetPath": "spritesheet.png",
   "frame": {
-    "width": 480,
-    "height": 480
+    "width": 280,
+    "height": 280
   },
   "fps": 6,
   "defaultAnimation": "idle",
@@ -184,53 +184,53 @@
     "effect": "water_jet.png",
     "mouthByFrame": [
       {
-        "x": 161,
-        "y": 183,
+        "x": 87,
+        "y": 102,
         "grow": 0.0
       },
       {
-        "x": 170,
-        "y": 183,
+        "x": 90,
+        "y": 102,
         "grow": 0.0
       },
       {
-        "x": 180,
-        "y": 183,
+        "x": 92,
+        "y": 102,
         "grow": 0.0
       },
       {
-        "x": 192,
-        "y": 183,
+        "x": 96,
+        "y": 102,
         "grow": 0.45
       },
       {
-        "x": 198,
-        "y": 183,
+        "x": 98,
+        "y": 102,
         "grow": 0.588
       },
       {
-        "x": 204,
-        "y": 183,
+        "x": 99,
+        "y": 102,
         "grow": 0.725
       },
       {
-        "x": 211,
-        "y": 183,
+        "x": 101,
+        "y": 102,
         "grow": 0.863
       },
       {
-        "x": 217,
-        "y": 183,
+        "x": 103,
+        "y": 102,
         "grow": 1.0
       },
       {
-        "x": 178,
-        "y": 183,
+        "x": 92,
+        "y": 102,
         "grow": 0.0
       },
       {
-        "x": 161,
-        "y": 183,
+        "x": 87,
+        "y": 102,
         "grow": 0.0
       }
     ]
