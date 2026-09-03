@@ -118,7 +118,8 @@ final class OrcaStatusWatcher: AgentStatusWatching {
 
     private func publish(entries: [AgentStatusEntry]) {
         let now = Date().timeIntervalSince1970 * 1000
-        let suppressed = suppressAcknowledgedDone(entries, acknowledgedAtMs: acknowledgedAtMs)
+        let decayed = decayStaleStates(entries, now: now)
+        let suppressed = suppressAcknowledgedDone(decayed, acknowledgedAtMs: acknowledgedAtMs)
         var result = agentStateAnimation(entries: suppressed, retainedCount: retainedCount, now: now)
         result.totalTokens = tokenReader.total(for: entries)
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {

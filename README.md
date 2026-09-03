@@ -76,7 +76,25 @@ python3 scripts/install_claude_hooks.py --uninstall  # connor-pet이 추가한 �
 | `Stop` | 에이전트가 턴을 마치고 제어권을 사용자에게 돌려줌 | `done` → **헤롱헤롱** |
 | `SessionEnd` | 세션 종료 | 해당 항목 제거 |
 
-`scripts/claude_hook_status.py`는 각 훅이 stdin으로 받는 JSON(`session_id`/`cwd` 포함)을 읽어서 `~/.claude/connor-pet-status.json`을 Orca의 `last-status.json`과 같은 형태로 갱신합니다(동시에 여러 세션이 훅을 발생시켜도 안전하도록 `fcntl.flock`으로 잠그고 원자적으로 씀). `ClaudeCodeStatusWatcher`는 이 파일이 있으면 세션 파일의 busy/idle보다 우선해서 씁니다 — 훅을 설정 안 해도 앱은 그대로 동작하고(예전처럼 busy/idle만), 설정하면 자동으로 더 정확해집니다.
+#### 실패와 시간 감쇠
+
+훅으로 들어오는 상태 위에 두 가지가 더 얹혀 있습니다.
+
+**도구 실패 → `failed`(붉은 떨림).** PostToolUse 훅은 **도구가 실패하면 발화하지 않습니다**
+(실제 세션에서 확인). 그래서 실패는 훅 이벤트로는 절대 도달하지 않습니다. 대신 훅 페이로드에
+같이 오는 `transcript_path` 의 꼬리를 읽어, 가장 마지막 `tool_result` 의 `is_error` 를 봅니다
+(`last_tool_errored`). 마지막 것만 보는 이유는, 실패했다가 다시 시도해 성공한 도구는 사용자가
+볼 필요가 없고 마지막 도구가 실패한 채로 끝난 턴은 봐야 하기 때문입니다. 트랜스크립트는
+수십 MB 라서 끝에서 256KB 만 seek 해서 읽습니다 (31MB 파일 기준 1ms).
+
+**시간이 지나면 상태가 내려갑니다** — `failed` 30초 → `done`, `done` 5분 → 잠듦,
+`working` 15분 → 잠듦. 이 판단은 훅이 아니라 **읽는 쪽(`PetAnimationState.swift` 의
+`decayStaleStates`)** 이 합니다. 훅은 세션이 살아 있을 때만 발화하므로, 마지막 세션이 끝나면
+파일을 갱신할 주체가 없어져 시간 기반 판단을 쓸 수가 없습니다. 워처는 어차피 폴링하고 있으니
+거기서 판단하면 공짜이고, Orca 소스에도 똑같이 적용됩니다. `얼음(blocked/waiting)`은 사용자가
+직접 응답해야 하는 상태라 감쇠하지 않습니다.
+
+`scripts/claude_hook_status.py`는 각 훅이 stdin으로 받는 JSON(`session_id`/`cwd`/`transcript_path` 포함)을 읽어서 `~/.claude/connor-pet-status.json`을 Orca의 `last-status.json`과 같은 형태로 갱신합니다(동시에 여러 세션이 훅을 발생시켜도 안전하도록 `fcntl.flock`으로 잠그고 원자적으로 씀). `ClaudeCodeStatusWatcher`는 이 파일이 있으면 세션 파일의 busy/idle보다 우선해서 씁니다 — 훅을 설정 안 해도 앱은 그대로 동작하고(예전처럼 busy/idle만), 설정하면 자동으로 더 정확해집니다.
 
 **헤롱헤롱이 사라지는 시점**: `done`은 그 세션이 다시 `working`으로 바뀌기 전까지, 또는 **펫에 마우스를 올리기 전까지** 유지됩니다(둘 중 먼저 오는 쪽). 펫을 호버하면 `AgentStatusWatching.acknowledgeDone()`이 호출되어 그 시점 이전의 `done`은 전부 "확인함" 처리되고, 그 이후에 새로 `done`이 찍히면 다시 나타납니다 — Stop 이벤트 하나가 무한히 헤롱헤롱을 유지하지 않도록 하는 장치입니다.
 
@@ -105,7 +123,42 @@ Orca의 훅 서버는 열려있는 모든 에이전트 패널의 상태를 250ms
 
 > **주의 (실제로 부딪힌 문제)**: 실제 파일을 열어보면 항목마다 모양이 다릅니다. 예를 들어 `SubagentStop` 훅에서 온 항목은 `state`/`prompt`/`agentType`이 최상위가 아니라 `payload` 안에 중첩되어 있었습니다. 처음엔 엄격한 Codable 구조체로 파싱했는데, 이 경우 항목 하나가 예상과 다른 모양이면 **파일 전체 파싱이 실패**해서 모든 패널의 상태가 조용히 사라지는 버그가 있었습니다. 지금은 `JSONSerialization`으로 느슨하게 파싱하면서 항목마다 최상위/`payload` 둘 다 확인하도록 고쳤습니다 (`OrcaStatusWatcher.swift`).
 
+`ConnorPet`은 이 파일을 1초마다 폴링(Orca 자신의 쓰기 주기보다 넉넉함)해서, Orca 펫이 쓰는 것과 같은 우선순위 로직(`pet-agent-state.ts`의 `agentStateAnimation`)을 열려있는 **모든** 프로젝트/패널에 대해 그대로 돌립니다:
+
+1. 하나라도 `blocked`/`waiting` → **waiting** (최우선, 즉시 확정)
+2. 없고 하나라도 `working` → **running**
+3. 없고 하나라도 `done` → **review**
+4. 아무것도 없음 → **idle**
+
+우선순위 로직 자체는 Orca 펫과 동일하게 포팅한 것이고, 여기에 각 상태를 포켓몬 상태이상
+컨셉으로 다시 스킨했습니다: `waiting`=**얼음(Freeze)**, `review`=**헤롱헤롱(Infatuation)**,
+`idle`=**잠듦(Sleep)**. `running`은 원래 그대로입니다.
+
+여기에 Orca 에는 없는 `failed` 상태를 하나 더 두었습니다 — 도구가 에러를 반환했을 때
+붉게 떨리는 모션입니다. 우선순위는 `waiting` 바로 아래로, 다른 패널이 돌고 있어도
+실패가 묻히지 않습니다.
+
+마우스를 올리면 **jumping**, 드래그하면 마우스를 따라 **running-left**/**running-right**.
 `ConnorPet`은 이 파일을 1초마다 폴링(Orca 자신의 쓰기 주기보다 넉넉함)합니다.
+
+### 클릭 / 우클릭
+
+- **좌클릭** — 최근 작업을 브리핑합니다 (아래 "클릭하면 브리핑" 참고). 말하는 동안에는
+  **waving** 모션이 재생되고, 말풍선이 떠 있을 때 한 번 더 누르면 닫힙니다.
+- **우클릭** — 모션 메뉴. 모션을 직접 골라 고정 재생할 수 있어 에이전트 상태를
+  기다리지 않고 확인할 수 있습니다. `자동`을 고르면 다시 실시간 상태를 따릅니다.
+  이 펫의 매니페스트에 없는 행은 비활성으로 보입니다.
+- **우클릭 → `s`** — 말하기. 좌클릭과 같은 브리핑인데 펫을 정확히 클릭할 필요가
+  없습니다.
+- **우클릭 → `a`** — 불뿜기 (파이리 전용, 아래 참고).
+
+단축키가 붙은 두 항목은 고정 재생이 아니라 그 자리에서 한 번 실행되는 **동작**이고,
+끝나면 원래 상태로 돌아갑니다. 나머지 모션은 고르면 그 자세로 고정됩니다.
+
+메뉴 맨 아래 **나가**로 앱을 끌 수 있습니다(메뉴바 아이콘의 Quit 과 같습니다).
+여기에는 일부러 단축키를 붙이지 않았습니다 — 메뉴가 열린 상태에서는 글자 키가 그대로
+먹기 때문에(`a`/`s` 가 그렇게 동작합니다) 종료에까지 달면 오타 한 번에 앱이 꺼집니다.
+- 드래그와 클릭은 이동 거리로 구분합니다(움직였으면 드래그, 아니면 클릭).
 
 ### 상태별로 실제 어떻게 보이는지
 
@@ -179,7 +232,9 @@ Claude Code는 세션마다 전체 대화 기록을 `~/.claude/projects/<cwd-slu
 ```
 totodile.codex-pet/     리아코(Totodile) Orca 임포트용 번들 (Settings → Experimental → Pet → Import)
   pet.json                 매니페스트: 9행 스프라이트 레이아웃, 프레임별 타이밍
-  spritesheet.png            800x1800, 4열 x 9행, 프레임 200x200
+  spritesheet.png            2400x1800, 최대 12열 x 9행, 프레임 200x200
+                               (행마다 프레임 수가 다릅니다 — 남는 칸은 투명)
+                               파이리만 3840x3200 / 프레임 320x320 — 아래 참고
 
 ditto.codex-pet/         메타몽(Ditto) Orca 임포트용 번들 — 위와 동일한 구조
 charmander.codex-pet/    파이리(Charmander) Orca 임포트용 번들 — 위와 동일한 구조
@@ -189,6 +244,7 @@ eevee.codex-pet/         이브이(Eevee) Orca 임포트용 번들 — 위와 �
 chikorita.codex-pet/     치코리타(Chikorita) Orca 임포트용 번들 — 위와 동일한 구조
 torchic.codex-pet/       아차모(Torchic) Orca 임포트용 번들 — 위와 동일한 구조
 togepi.codex-pet/        토게피(Togepi) Orca 임포트용 번들 — 위와 동일한 구조
+tepig.codex-pet/         뚜꾸리(Tepig) Orca 임포트용 번들 — 위와 동일한 구조
 
 scripts/build_sheet.py   재현 가능한 생성 스크립트 — `PETS` 리스트에 등록된 각 포켓몬마다
                           PokeAPI의 5세대 배틀 스프라이트를 받아서 `<slug>.codex-pet/`과
@@ -221,13 +277,18 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
     TokenUsage.swift             트랜스크립트 JSONL에서 실제 토큰 사용량을 mtime 캐시로 합산
                                   (TranscriptTokenReader) + 토큰→경험치%/진화단계 매핑(XPModel)
     SpriteSheet.swift           spritesheet.png를 애니메이션별 프레임 배열로 자름
-    PetView.swift                프레임 렌더링, 호버/드래그 처리, 펫 아래 경험치 바 그리기
+    PetView.swift                프레임 렌더링, 호버/드래그/클릭/우클릭 모션 메뉴, 펫 아래 경험치 바 그리기
     PetWindow.swift               테두리 없는 투명, 항상 위에 뜨는 NSWindow
+    SessionBrief.swift             ~/.claude/projects 트랜스크립트에서 최근 세션 진행상황 추출
+    BriefingSummarizer.swift        claude CLI 로 진행상황을 요약 (캐시 + 백그라운드 갱신)
+    SpeechBubbleWindow.swift        말풍선 패널 (펫 위에 뜨고, 화면 밖으로 안 나가게 보정)
+    FlameWindow.swift               속성기 이펙트 전용 투명 창 (클릭 통과)
     AppDelegate.swift              전체 연결 + 메뉴바 포켓몬/소스 선택·경험치 바 토글·Quit 메뉴 + 진화 스프라이트 교체
-    Resources/pets/<slug>/          펫별 spritesheet.png + pet.json 번들 사본. 기본 9종(totodile, ditto,
-                                     charmander, squirtle, geodude, eevee, chikorita, torchic, togepi) + 진화형 13종
-                                     (croconaw, feraligatr, charmeleon, charizard, wartortle, blastoise,
-                                     graveler, golem, bayleef, meganium, combusken, blaziken, vaporeon)
+    Resources/effects/              속성기·Zzz 이펙트 스프라이트 (fire_jet, water_jet, zzz)
+    Resources/pets/<slug>/          펫별 spritesheet.png + pet.json 번들 사본. 기본 10종(totodile, ditto,
+                                     charmander, squirtle, geodude, eevee, chikorita, torchic, togepi, tepig)
+                                     + 진화형 13종 (croconaw, feraligatr, charmeleon, charizard, wartortle,
+                                     blastoise, graveler, golem, bayleef, meganium, combusken, blaziken, vaporeon)
 ```
 
 ## 실행 방법
@@ -260,6 +321,120 @@ xattr -d com.apple.quarantine /Applications/<Pet>-pet.app
 open /Applications/<Pet>-pet.app
 ```
 
+크기는 Orca 자체 기본값(`PET_SIZE_DEFAULT=180`)보다 작게, `90pt`로 맞춰뒀습니다 (`AppDelegate.swift`의 `petSize`). 더 키우거나 줄이고 싶으면 이 값만 바꾸면 됩니다.
+
+## 클릭하면 브리핑
+
+펫을 좌클릭하면 최근에 쓴 세션들을 최근 이용 순으로, 세션당 100자·합계 500자 이내로
+말풍선에 띄웁니다. 각 줄은 `· [프로젝트] 그 세션을 시작할 때 요청한 내용` 형태입니다.
+
+### 속성기 = "여기까지 정리" 체크포인트
+
+파이리는 **불뿜기**, 꼬부기는 **물뿜기**를 씁니다. 속성기는 그 포켓몬의 타입에 묶이므로
+전 펫 공통일 수 없어서, `build_sheet.py` 의 `SKILLS` 에 등록된 펫만 해당 행을 갖습니다.
+한 펫에 하나뿐이라 단축키는 `a` 를 공유합니다 — 매니페스트에 그 행이 없는 펫에서는
+메뉴 항목이 비활성으로 보입니다.
+
+이펙트가 나오는 입 위치는 **스프라이트 크기에 대한 비율**로 둡니다. 프레임 절대좌표나
+스프라이트 로컬 픽셀로 두면 확대 배율을 바꿀 때 같이 움직이지 않습니다 — 실제로
+파이리를 4배에서 8배로 키웠을 때 불길이 입이 아니라 이마에서 나오고 있었습니다.
+
+우클릭 메뉴에서 고르거나, 메뉴가 열린 상태에서 `a` 를 누르면 한 번 씁니다.
+
+**불길은 스프라이트시트에 없습니다.** 별도 창(`FlameWindow.swift`)에 그립니다.
+
+스프라이트 행은 프레임 한 칸보다 넓어질 수 없습니다. 불길을 시트 안에 그리려면
+프레임을 키워야 하는데, 그러면 **모든 행의 모든 프레임**이 같이 커집니다 — 화면상
+675pt 짜리 불길은 프레임 1600px, 시트 19200x16000, 창 720pt 로 계산됐습니다.
+별도 창에서는 이미지 하나를 그릴 때 늘리기만 하면 되므로 크기가 공짜이고, 그 창을
+`ignoresMouseEvents = true` 로 두면 넓어진 영역이 클릭을 가로채지도 않습니다.
+
+시트에는 펫의 반동 동작만 들어갑니다. 앱이 불길을 어디에 붙일지 알 수 있도록,
+`build_sheet.py` 가 프레임마다 입 좌표와 불길 크기를 매니페스트의 `fireBreath.
+mouthByFrame` 으로 함께 내보냅니다. 입 위치는 프레임 절대좌표가 아니라 **스프라이트
+기준 오프셋**(`MOUTH_IN_SPRITE`)에서 계산하므로, 프레임 크기를 바꿔도 따라갑니다.
+`paste_centered` 가 스프라이트를 프레임 안으로 클램프하면 오프셋이 잘리는데,
+`applied_offset` 으로 잘린 뒤의 값을 써야 불길이 입에서 떨어지지 않습니다.
+
+불길 길이는 `FlameWindow.lengthMultiplier` 하나로 조절합니다 (창 너비 × 배수).
+
+### 파이리·꼬부기는 두 배 크기
+
+이 둘은 프레임이 400px 이고 스프라이트를 8배(다른 펫은 3~4배)로 확대합니다
+(`FRAME_BY_PET` / `SPRITE_TARGET_BY_PET`). 창 크기도 프레임 비율만큼 커져서
+(`AppDelegate.windowSize(for:)` — 파이리 180pt, 나머지 90pt) 화면에 찍히는 캐릭터가
+다른 펫의 정확히 2배가 됩니다.
+
+창만 2배로 키우지 않은 이유는 도트 때문입니다. 200px 소스를 180pt(레티나 360px)에
+그리면 1.8배 확대가 되어 픽셀 격자가 뭉개집니다. 소스를 정수배로 두 배 키우고
+프레임을 같이 넓히면 화면에 그릴 때의 축소 비율이 기존과 같아집니다.
+
+뿜은 **시각이 저장되고**, 그 뒤로 브리핑의 성격이 바뀝니다. 지금까지 한 일을 훑는
+대신 **불 뿜은 시점 이후에 움직인 세션만** 보여 줍니다 — "여기까지 정리했으니 앞으로
+할 일만 보자"는 표시입니다. 뿜은 지 3시간이 지나면 체크포인트는 만료되고 아래 기본
+규칙으로 돌아갑니다.
+
+| 상황 | 브리핑 |
+|---|---|
+| 3시간 이내에 뿜었고 이후 움직인 세션이 있음 | "불 뿜은 뒤로 이것들만 남았어." + 목록 |
+| 3시간 이내에 뿜었고 이후 아무것도 없음 | "불 뿜은 뒤로 새로 시작한 작업은 아직 없어." |
+| 뿜은 적 없음 / 3시간 지남 | 아래 기본 2단 규칙 |
+
+세션의 "움직인 시각"은 트랜스크립트 파일의 수정 시각입니다. 그래서 불 뿜기 전에
+시작해 **아직 진행 중인** 세션은 계속 목록에 남습니다 — 끝나지 않은 일은 앞으로 할
+일이기도 하니 의도된 동작입니다.
+
+### 기본 범위 (체크포인트가 없을 때)
+
+범위는 2단입니다.
+
+1. **최근 3시간** 안에 쓴 세션 — "지금 하던 일"은 이 안에 있습니다. 상한은 5개인데,
+   글자 예산이 어차피 다섯 줄에서 끊기기 때문입니다.
+2. 3시간 안에 **하나도 없을 때만** 48시간까지 넓혀 3개. 이 경우 "최근 3시간은 조용했어"
+   라고 먼저 말합니다 — 안 그러면 이틀 전 작업을 지금 하던 일로 읽게 됩니다.
+
+출처는 Claude Code 자신의 트랜스크립트 디렉터리입니다.
+
+```
+~/.claude/projects/<슬러그화된-cwd>/<sessionId>.jsonl
+```
+
+**`claude` CLI 와 Claude Code 데스크톱 앱이 모두 여기에 기록**하고, 레코드마다 `entrypoint`
+필드(`cli` / `claude-desktop`)로 구분되기 때문에 리더 하나로 양쪽을 다 커버합니다. 둘 중
+아무것도 실행 중이 아니어도 읽힙니다.
+
+### 무엇을 말하는가 — `claude` 요약
+
+각 줄은 그 세션이 **어디까지 진행됐는지**를 `claude` CLI 가 한 줄로 적은 것입니다.
+무슨 주제인지가 아니라 무엇까지 끝났고 지금 무엇이 걸려 있는지를 씁니다 — 이어서
+하려면 어디를 봐야 하는지가 필요하지, "펫 앱 기획 중" 같은 주제 설명은 도움이 되지
+않기 때문입니다. 판단 재료는 그 세션의 **마지막 요청 4개와 마지막 응답**입니다.
+응답이 있어야 무엇이 됐는지를 알 수 있습니다.
+
+세션 사이는 빈 줄로 띄웁니다. 말풍선 안에서 줄바꿈이 일어나면 어디서 한 세션이
+끝나는지 구분이 안 됩니다. 말풍선은 30초 동안 떠 있습니다(`PetView.briefingDuration`)
+— 여러 세션을 훑어 읽을 시간이 필요합니다.
+
+요약은 **캐시해 두고 씁니다.** `claude -p` 왕복이 실측 10초라 클릭을 붙잡아 둘 수
+없습니다. 클릭은 항상 디스크에 있는 걸 즉시 보여 주고, 갱신은 백그라운드로 돌아
+다음 클릭에 반영됩니다. 캐시가 아직 없으면 원문 발췌로 대신합니다. 앱이 뜰 때 한 번
+미리 돌려 두므로 첫 클릭도 대개 요약본입니다.
+
+캐시는 **세션 id 묶음**으로 식별하고 10분이 지나면 새로 만듭니다. 처음에는 파일
+수정 시각도 식별자에 넣었는데, 살아 있는 세션은 몇 초마다 트랜스크립트가 갱신돼서
+캐시가 한 번도 맞지 않았습니다.
+
+요약을 돌리는 `claude` 호출도 그 자체로 Claude Code 세션이라 트랜스크립트를 남깁니다.
+그대로 두면 다음 브리핑에 "펫이 자기 요약을 요약한 내용"이 섞이므로, 전용 작업
+디렉터리(`~/Library/Application Support/ConnorPet/agent`)에서 돌리고 리더가 그 폴더를
+건너뜁니다. `claude` 가 없거나 실패하면 원문 발췌로 조용히 되돌아갑니다.
+
+트랜스크립트는 큽니다(실측 31MB 세션 존재). 클릭에 즉시 반응해야 하므로 파일을 통째로
+읽지 않고 **앞부분 128KB(세션의 목표)와 뒷부분 192KB(최근 요청)만** 읽습니다 — 필요한 건 그 세션을 무엇 때문에 시작했는지이고,
+확인해 본 모든 최근 트랜스크립트에서 첫 사용자 메시지가 앞 8KB 안에 있었습니다.
+슬래시 커맨드 껍데기·스킬 본문·주입된 리마인더처럼 사람이 쓴 요청이 아닌 레코드와,
+12자 미만의 한 마디짜리 세션은 걸러냅니다 (`SessionBrief.swift`).
+
 ## 테스트하기 (실제 에이전트 없이)
 
 `scripts/simulate_agent.py`는 **Orca 소스**용입니다 (메뉴에서 소스를 Orca로 바꾼 뒤 사용):
@@ -291,7 +466,7 @@ CONNORPET_DEBUG=1 swift run
 
 ## Orca 안에서 직접 쓰고 싶다면
 
-Orca 자체 펫으로 쓰고 싶으면(Settings → Experimental → Pet → Import), 원하는 펫의 `<slug>.codex-pet/` 폴더(`totodile`/`ditto`/`charmander`/`squirtle`/`geodude`/`eevee`/`chikorita`/`torchic`/`togepi`)를 그대로 임포터에 지정하면 됩니다.
+Orca 자체 펫으로 쓰고 싶으면(Settings → Experimental → Pet → Import), 원하는 펫의 `<slug>.codex-pet/` 폴더(`totodile`/`ditto`/`charmander`/`squirtle`/`geodude`/`eevee`/`chikorita`/`torchic`/`togepi`/`tepig`/`togepi`)를 그대로 임포터에 지정하면 됩니다.
 
 ## 스프라이트 시트 다시 만들기
 
@@ -299,6 +474,31 @@ Orca 자체 펫으로 쓰고 싶으면(Settings → Experimental → Pet → Imp
 pip install pillow
 python3 scripts/build_sheet.py
 ```
+
+### 프레임 수와 확대 배율
+
+원본 gen5 배틀 스프라이트는 **55프레임짜리 애니메이션 GIF** 입니다. 예전에는 행마다 4장만
+뽑아 써서 재생이 슬라이드쇼처럼 끊겼고, 지금은 행마다 8~12장을 뽑습니다(`FRAME_SPEC`).
+
+같이 고친 것 세 가지입니다.
+
+- **프레임별 `autocrop` 제거** — 프레임마다 따로 잘라 중앙에 놓으면 원본 GIF 안에 들어 있던
+  호흡·바운스가 전부 지워집니다. 전 프레임 **공통 bbox** 로 잘라야 프레임 간 상대 움직임이
+  남습니다. 이어져 보이는 실제 이유가 이것입니다.
+- **정수배 확대** — 41x42 도트를 3.571배로 NEAREST 확대하면 한 도트가 3px 이 되기도 4px 이
+  되기도 해서 픽셀 격자가 무너집니다. 반올림한 정수 배율만 씁니다(내림으로 하면 꼬마돌이
+  2.79배 → 2배로 28% 작아집니다).
+- **오프셋 클램프** — `paste_centered` 가 dx/dy 를 프레임 안으로 잘라 냅니다. 예전에는
+  점프 최고점에서 머리 위가 실제로 프레임 밖으로 나가 잘리고 있었습니다.
+
+재생 속도는 원본의 자연 속도(55프레임 x 100ms = 5.5초 루프)를 기준으로 잡습니다.
+`FRAME_SPEC` 의 주석에 모션마다 자연 속도의 몇 배인지 적어 두었습니다.
+
+이펙트 스프라이트(`scripts/effects/`)는 예외적으로 저장소에 커밋합니다. PokeAPI 에서
+받을 수 있는 게 아니고 생성형 이미지라 스크립트를 다시 돌려도 똑같이 나오지 않기
+때문입니다. 파일이 없으면 그 연출만 건너뛰고 빌드는 통과합니다.
+
+`scripts/build_sheet.py`의 `PETS` 리스트에 등록된 각 포켓몬(현재 리아코 #158, 메타몽 #132, 파이리 #4, 꼬부기 #7, 꼬마돌 #74, 이브이 #133, 치코리타 #152, 아차모 #255)마다 PokeAPI에서 5세대 애니메이션 배틀 스프라이트를 다시 받아서 `<slug>.codex-pet/{spritesheet.png,pet.json}`과 `ConnorPet/Sources/ConnorPet/Resources/pets/<slug>/`의 앱 번들 사본을 동시에 처음부터 재생성합니다 — 완전히 재현 가능하고, 바이너리 원본 에셋은 저장소에 커밋하지 않습니다. 새 포켓몬을 펫 선택 메뉴에 추가하려면 `PETS`에 항목을 하나 더 넣고 스크립트를 다시 돌린 뒤, `AppDelegate.swift`의 `availablePetSlugs`에 슬러그를 추가하면 됩니다.
 
 `scripts/build_sheet.py`의 `PETS` 리스트에 등록된 각 기본 포켓몬(현재 리아코 #158, 메타몽 #132, 파이리 #4, 꼬부기 #7, 꼬마돌 #74, 이브이 #133, 치코리타 #152, 아차모 #255, 토게피 #175)과 `_EVOLUTIONS`의 진화형(크로콘 #159, 장크로다일 #160, 리자드 #5, 리자몽 #6, 어니부기 #8, 거북왕 #9, 데구리 #75, 딱구리 #76, 베이리프 #153, 메가니움 #154, 영뿔 #256, 번치코 #257, 샤미드 #134)마다 PokeAPI에서 5세대 애니메이션 배틀 스프라이트를 다시 받아서 `ConnorPet/Sources/ConnorPet/Resources/pets/<slug>/`의 앱 번들 사본을(기본 펫은 추가로 `<slug>.codex-pet/`까지) 처음부터 재생성합니다 — 완전히 재현 가능하고, 바이너리 원본 에셋은 캐시에 받아둘 뿐 저장소에 원본을 커밋하지 않습니다. 새 포켓몬을 펫 선택 메뉴에 추가하려면 `PETS`에 항목을 하나 더 넣고 스크립트를 다시 돌린 뒤, `AppDelegate.swift`의 `availablePetSlugs`에 슬러그를 추가하면 됩니다. 진화형을 바꾸려면 `_EVOLUTIONS`와 `AppDelegate.evolutionChains`를 함께 수정하세요.
 
