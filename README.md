@@ -192,6 +192,9 @@ scripts/build_sheet.py   재현 가능한 생성 스크립트 — `PETS` 리스�
                           PokeAPI의 5세대 배틀 스프라이트를 받아서 `<slug>.codex-pet/`과
                           ConnorPet 앱의 번들 리소스를 함께 재생성합니다 (`python3 scripts/build_sheet.py`)
 
+scripts/make_app.sh        release 빌드를 독립 실행형 ConnorPet.app으로 감싸서 ~/Applications에
+                             설치합니다 (터미널과 무관하게 상주, 아래 "실행 방법" 참고)
+
 scripts/simulate_agent.py  실제 에이전트 없이 테스트하기 위한 도구. last-status.json에
                              가짜 패널 상태를 주입/삭제합니다 (아래 "테스트하기" 참고, Orca 소스 전용)
 
@@ -229,6 +232,21 @@ ConnorPet/                 진짜 결과물: 독립 실행형 macOS 앱
 ```
 
 ## 실행 방법
+
+### 앱으로 설치해서 상주시키기 (권장)
+
+```sh
+./scripts/make_app.sh                  # ~/Applications/ConnorPet.app 생성 (기본값)
+open -a ~/Applications/ConnorPet.app   # 실행
+```
+
+`scripts/make_app.sh`는 release 빌드를 `.app` 번들로 감싸서 설치합니다. 이렇게 띄우면 **실행한 터미널을 닫아도 펫이 계속 떠 있습니다** (아래 `swift run`은 셸의 자식 프로세스로 실행되기 때문에 터미널을 닫으면 같이 죽습니다). Dock/앱 스위처에는 뜨지 않고 메뉴바에만 남으며(`LSUIElement`), 다음부터는 Spotlight에서 `ConnorPet`으로 바로 실행할 수 있습니다. 종료는 메뉴바 → Quit. 설치 위치를 바꾸고 싶으면 인자로 넘기면 됩니다 (`./scripts/make_app.sh /Applications`).
+
+코드를 고친 뒤에는 스크립트를 다시 실행하면 됩니다 — 떠 있는 인스턴스를 알아서 종료하고 번들을 교체합니다.
+
+> **알아둘 점**: `swift run`은 번들 id가 없고 `.app`은 `io.github.pet-egg.connorpet`을 쓰기 때문에 UserDefaults 도메인이 다릅니다. `.app`으로 처음 실행하면 펫 종류·상태 소스·진화 설정·창 위치가 기본값에서 한 번 다시 시작합니다(이후로는 그대로 유지됩니다).
+
+### 개발 중 실행
 
 ```sh
 cd ConnorPet
