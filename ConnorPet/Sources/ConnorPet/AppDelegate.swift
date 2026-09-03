@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // (see scripts/build_sheet.py's PETS list, which is the source of truth for
     // this set). Display names shown in the menu come from each pet's own
     // manifest rather than being duplicated here.
-    private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic"]
+    private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic", "togepi"]
     private var petDisplayNames: [String: String] = [:]
     private var selectedPetSlug = availablePetSlugs[0]
 
@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // evolution, stage 2 → second (see XPModel.stage). The evolved forms are
     // bundled just like the base pets (scripts/build_sheet.py builds them from
     // each next PokéDex form) but aren't offered in the picker — evolution is
-    // automatic, driven by token-usage XP. Ditto has no evolution.
+    // automatic, driven by token-usage XP. Ditto and Togepi have no evolution.
     private static let evolutionChains: [String: [String]] = [
         "totodile": ["croconaw", "feraligatr"],
         "charmander": ["charmeleon", "charizard"],
@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "torchic": ["combusken", "blaziken"],
         "eevee": ["vaporeon"],
         "ditto": [],
+        "togepi": [],
     ]
 
     // Evolution % thresholds [stage1, stage2], configurable from the menu bar.
@@ -49,8 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Preset percentages offered in the menu for each stage.
     private static let thresholdPresets: [Double] = [0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.70]
     // Whether the pet evolves at all (menu toggle). When off it stays the base
-    // form regardless of XP. Default on.
-    private var evolutionEnabled = true
+    // form regardless of XP. Default off.
+    private var evolutionEnabled = false
 
     // Whether the XP bar is always shown vs. only on hover (menu toggle).
     private var barAlwaysVisible = true
@@ -102,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         barAlwaysVisible = Self.savedBarAlwaysVisible(fallback: true)
         view.setBarAlwaysVisible(barAlwaysVisible)
         evolutionThresholds = Self.savedEvolutionThresholds(fallback: XPModel.stageThresholds)
-        evolutionEnabled = Self.savedEvolutionEnabled(fallback: true)
+        evolutionEnabled = Self.savedEvolutionEnabled(fallback: false)
         view.onRequestWindowMove = { [weak win] newOrigin in
             win?.setFrameOrigin(newOrigin)
             Self.saveOrigin(newOrigin)
@@ -449,7 +450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(enabled, forKey: evolutionEnabledDefaultsKey)
     }
 
-    // Defaults to `fallback` (true — evolution on) when nothing saved yet.
+    // Defaults to `fallback` (false — evolution off) when nothing saved yet.
     private static func savedEvolutionEnabled(fallback: Bool) -> Bool {
         guard UserDefaults.standard.object(forKey: evolutionEnabledDefaultsKey) != nil else { return fallback }
         return UserDefaults.standard.bool(forKey: evolutionEnabledDefaultsKey)
