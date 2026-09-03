@@ -9,16 +9,23 @@ enum PetAnimationName: String, CaseIterable {
     case jumping
     case waving
     case failed
-    /// 파이리 전용. 매니페스트에 이 행이 없는 펫에서는 메뉴가 비활성된다.
+    /// 속성기. 매니페스트에 그 행이 없는 펫에서는 메뉴가 비활성된다.
+    /// 한 펫에 하나만 있으므로 단축키를 공유해도 부딪히지 않는다.
     case fireBreath = "fire-breath"
+    case waterGun = "water-gun"
     case runningRight = "running-right"
     case runningLeft = "running-left"
+
+    /// 속성기인가 — 한 펫에 최대 하나뿐이고, 브리핑 체크포인트를 찍는다.
+    var isSkill: Bool {
+        self == .fireBreath || self == .waterGun
+    }
 
     /// 우클릭 메뉴에서 고정 재생이 아니라 **한 번 실행되는 동작**인 모션과, 메뉴가
     /// 열린 상태에서 누를 단축키. 나머지는 골라 두면 그 자세로 고정된다.
     var menuShortcut: String? {
         switch self {
-        case .fireBreath: return "a"
+        case .fireBreath, .waterGun: return "a"
         case .waving:     return "s"
         default:          return nil
         }
@@ -40,6 +47,7 @@ enum PetAnimationName: String, CaseIterable {
         case .waving:       return "말하기 — 클로드 세션 진행상황"
         case .failed:       return "실패"
         case .fireBreath:   return "불뿜기 — 여기까지 정리, 이후 작업만 브리핑"
+        case .waterGun:     return "물뿜기 — 여기까지 정리, 이후 작업만 브리핑"
         case .runningRight: return "오른쪽보기"
         case .runningLeft:  return "왼쪽보기"
         }

@@ -36,12 +36,12 @@ final class PetView: NSView {
     /// 원래 상태로 돌아간다 — 체크포인트 동작이라 계속 뿜고 있으면 곤란하다.
     private var oneShotAnimation: PetAnimationName?
 
-    /// 불뿜기가 실제로 재생됐을 때. 호출부가 시각을 기록한다.
-    var onFireBreath: (() -> Void)?
+    /// 속성기가 실제로 재생됐을 때. 호출부가 시각을 기록한다.
+    var onSkillUsed: (() -> Void)?
 
-    /// 불뿜기 프레임이 바뀔 때마다 호출된다. 매니페스트 좌표(프레임 기준)를
+    /// 속성기 프레임이 바뀔 때마다 호출된다. 매니페스트 좌표(프레임 기준)를
     /// 그대로 넘기고, 화면 좌표 환산과 그리기는 호출부가 한다.
-    /// grow 가 0 이면 이번 프레임에는 불길이 없다.
+    /// grow 가 0 이면 이번 프레임에는 이펙트가 없다.
     var onFlameFrame: ((_ mouthInFrame: CGPoint, _ grow: CGFloat) -> Void)?
 
     var onRequestWindowMove: ((_ screenOrigin: CGPoint) -> Void)?
@@ -167,9 +167,9 @@ final class PetView: NSView {
             let shortcut = name.menuShortcut
             let action: Selector
             switch name {
-            case .fireBreath: action = #selector(fireBreath(_:))
-            case .waving:     action = #selector(speakBriefing(_:))
-            default:          action = #selector(pinMotion(_:))
+            case _ where name.isSkill: action = #selector(useSkill(_:))
+            case .waving:              action = #selector(speakBriefing(_:))
+            default:                   action = #selector(pinMotion(_:))
             }
             let item = NSMenuItem(title: name.koreanLabel, action: action,
                                   keyEquivalent: shortcut ?? "")
@@ -197,10 +197,12 @@ final class PetView: NSView {
         }
     }
 
-    @objc private func fireBreath(_ sender: NSMenuItem) {
+    @objc private func useSkill(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let name = PetAnimationName(rawValue: raw) else { return }
         pinnedAnimation = nil
-        if playOnce(.fireBreath) {
-            onFireBreath?()
+        if playOnce(name) {
+            onSkillUsed?()
         }
     }
 
@@ -271,8 +273,9 @@ final class PetView: NSView {
 
     /// 지금 재생 중인 프레임에 맞는 불길 상태를 호출부에 알린다.
     private func publishFlameState() {
-        guard oneShotAnimation == .fireBreath,
-              let track = spriteSheet.manifest.fireBreath?.mouthByFrame,
+        guard let skill = spriteSheet.manifest.skill,
+              oneShotAnimation?.rawValue == skill.row,
+              case let track = skill.mouthByFrame,
               track.indices.contains(frameIndex)
         else {
             onFlameFrame?(.zero, 0)

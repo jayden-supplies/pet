@@ -35,14 +35,14 @@ FRAME_DEFAULT = 200
 # 펫의 2배 크기로 보여 주기 위해서다. 창만 2배로 키우면 200px 소스를 1.8배로 늘려
 # 그리게 돼 도트가 뭉개지므로, 스프라이트를 정수배로 두 배(4배 → 8배 확대) 다시 굽고
 # 프레임도 같이 넓힌다.
-FRAME_BY_PET = {"charmander": 400}
+FRAME_BY_PET = {"charmander": 400, "squirtle": 400}
 FRAME = FRAME_DEFAULT
 SPRITE_TARGET = SPRITE_TARGET_DEFAULT if False else (170, 150)
 
 # 스프라이트를 프레임 안 어느 크기까지 키울지. 기본값은 좌우 이동·점프 오프셋이
 # 들어갈 여백을 남기도록 잡혀 있다.
 SPRITE_TARGET_DEFAULT = (170, 150)
-SPRITE_TARGET_BY_PET = {"charmander": (340, 345)}
+SPRITE_TARGET_BY_PET = {"charmander": (340, 345), "squirtle": (330, 345)}
 ROWS_ORDER = [
     "idle", "running-right", "running-left", "waving",
     "jumping", "failed", "waiting", "running", "review"
@@ -72,21 +72,24 @@ FRAME_SPEC = {
     "running":       (12, 180),   # 2.5x — 작업 중
     "review":        (12, 220),   # 2.1x — 헤롱헤롱
     "fire-breath":   (10, 110),   # 5.0x — 불뿜기. 짧고 세게
+    "water-gun":     (10, 110),   # 5.0x — 물뿜기
 }
 COLS = max(n for n, _ in FRAME_SPEC.values())
 
-# 모든 펫이 갖는 행(ROWS_ORDER) 외에, 특정 펫에만 붙는 행.
-# 속성기는 그 포켓몬의 타입에 묶이므로 전 펫 공통일 수 없다.
-EXTRA_ROWS = {
-    "charmander": ["fire-breath"],
+# 속성기 — 그 포켓몬의 타입에 묶이므로 전 펫 공통 행일 수 없다. 여기 등록된 펫만
+# 해당 행을 갖고, 앱은 매니페스트에 그 행이 있는 펫에서만 메뉴를 활성화한다.
+#
+# mouth 는 이펙트가 나오는 입 위치인데, **스프라이트 크기에 대한 비율**이다.
+# 프레임 절대좌표나 스프라이트 로컬 픽셀로 두면 확대 배율을 바꿀 때 같이 움직이지
+# 않아 어긋난다 — 실제로 파이리를 4배에서 8배로 키웠을 때 불길이 입이 아니라
+# 이마에서 나오고 있었다.
+SKILLS = {
+    "charmander": {"row": "fire-breath", "effect": "fire_jet.png",  "mouth": (0.268, 0.369)},
+    "squirtle":   {"row": "water-gun",   "effect": "water_jet.png", "mouth": (0.179, 0.360)},
 }
+EXTRA_ROWS = {slug: [cfg["row"]] for slug, cfg in SKILLS.items()}
 
 EFFECTS_DIR = os.path.join(HERE, "effects")
-
-# 불길이 나오는 입 위치. **프레임이 아니라 스프라이트 왼쪽 위 기준**의 오프셋이다.
-# 프레임 크기가 펫마다 다르므로 프레임 절대좌표로 두면 프레임을 바꿀 때마다 어긋난다.
-# 파이리 기준으로 눈으로 맞춘 값이고, 다른 펫에 속성기를 붙이면 따로 잡아야 한다.
-MOUTH_IN_SPRITE = (44, 62)
 # 불길 끝과 프레임 왼쪽 변 사이에 남길 여백. 0 이면 변에 닿아 잘린 것처럼 보인다.
 JET_MARGIN = 8
 
@@ -570,10 +573,11 @@ def build_pet(pet):
     # done is the completion state, reskinned as Infatuation: a warm pink
     # tint (replacing the old gold) plus floating hearts instead of just a
     # color shift.
-    # 불뿜기 — 파이리 전용. 숨을 들이켰다가(뒤로 젖힘) 앞으로 내뿜는다.
-    # 펫이 왼쪽을 보고 있으므로 불길도 왼쪽으로 나간다.
-    if "fire-breath" in EXTRA_ROWS.get(pet["slug"], []):
-        n, durs = spec("fire-breath")
+    # 속성기 — SKILLS 에 등록된 펫만. 숨을 들이켰다가(뒤로 젖힘) 앞으로 내뿜는다.
+    # 펫이 왼쪽을 보고 있으므로 이펙트도 왼쪽으로 나간다.
+    if pet["slug"] in SKILLS:
+        skill = SKILLS[pet["slug"]]
+        n, durs = spec(skill["row"])
         breath_frames = []
         # 프레임마다 입이 어디로 가는지와 불길이 얼마나 커졌는지. 불길 자체는
         # 시트에 없고 앱이 별도 창에 그리므로, 앱이 이 값을 읽어 위치를 맞춘다.
@@ -584,8 +588,7 @@ def build_pet(pet):
             #
             # 분사 중에는 펫이 **오른쪽으로** 밀린다. 반동이라 그림상 자연스럽기도
             # 하지만, 실질적인 이유는 불길이 나갈 자리를 왼쪽에 만들어 주는 것이다.
-            # 예전에는 반대로 왼쪽으로 기울여서 여유를 더 깎아 먹었고, 제트 129px 가
-            # 56px 공간에 들어가느라 56% 가 프레임 밖에서 잘려 단절돼 보였다.
+            # 예전에는 반대로 왼쪽으로 기울여서 여유를 더 깎아 먹었다.
             recoil = max(0, (FRAME - src[0].width) // 2 - 4)   # 프레임 안에서 밀 수 있는 한계
             if i < 3:
                 dx, grow = round(recoil * (i / 6)), 0.0
@@ -601,13 +604,17 @@ def build_pet(pet):
             sx = (FRAME - sprite.width) // 2 + adx
             sy = (FRAME - sprite.height) // 2 + ady
             mouth_by_frame.append({
-                "x": sx + MOUTH_IN_SPRITE[0],
-                "y": sy + MOUTH_IN_SPRITE[1],
+                "x": sx + round(skill["mouth"][0] * sprite.width),
+                "y": sy + round(skill["mouth"][1] * sprite.height),
                 "grow": round(grow, 3),
             })
             breath_frames.append(frame)
-        rows["fire-breath"] = {"frames": breath_frames, "durations": durs}
-        extra_manifest["fireBreath"] = {"mouthByFrame": mouth_by_frame}
+        rows[skill["row"]] = {"frames": breath_frames, "durations": durs}
+        extra_manifest["skill"] = {
+            "row": skill["row"],
+            "effect": skill["effect"],
+            "mouthByFrame": mouth_by_frame,
+        }
 
     n, durs = spec("review")
     review_frames = []

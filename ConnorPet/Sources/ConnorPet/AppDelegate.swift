@@ -111,8 +111,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             let length = win.frame.width * FlameWindow.lengthMultiplier * grow
             flame.show(mouth: mouth, length: length, aspect: self.flameAspect)
+            if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
+                FileHandle.standardError.write("[connor-pet] 이펙트 grow=\(grow) 길이=\(Int(length))pt\n".data(using: .utf8)!)
+            }
         }
-        view.onFireBreath = { [weak self] in
+        view.onSkillUsed = { [weak self] in
             Self.saveFireBreathAt(Date())
             guard let self, let petFrame = self.window?.frame else { return }
             self.bubble?.show(text: "좋아, 여기까지! 이제부터 할 일만 볼게.",
@@ -127,11 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window = win
         petView = view
         bubble = SpeechBubbleWindow()
-        if let url = Bundle.module.url(forResource: "fire_jet", withExtension: "png", subdirectory: "effects"),
-           let image = NSImage(contentsOf: url), image.size.height > 0 {
-            flameAspect = image.size.width / image.size.height
-            flame = FlameWindow(image: image)
-        }
+        loadSkillEffect(for: sheet)
 
         setUpStatusItem()
 
@@ -150,7 +149,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 불뿜기를 한 번 재생해 불길 창 좌표를 눈으로 확인할 수 있게 한다.
             if ProcessInfo.processInfo.environment["CONNORPET_DEBUG_BREATH"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.petView?.playOnce(.fireBreath)
+                    guard let self, let row = self.petView?.currentSpriteSheet.manifest.skill?.row,
+                          let name = PetAnimationName(rawValue: row) else {
+                        FileHandle.standardError.write("[connor-pet] 이 펫에는 속성기가 없다\n".data(using: .utf8)!)
+                        return
+                    }
+                    let ok = self.petView?.playOnce(name) ?? false
+                    FileHandle.standardError.write("[connor-pet] 속성기 \(row) 재생=\(ok) flame창=\(self.flame != nil)\n".data(using: .utf8)!)
                 }
             }
             if let petFrame = window?.frame {
@@ -168,6 +173,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    /// 펫마다 속성기 이펙트 그림이 다르다(파이리 불길 / 꼬부기 물줄기). 매니페스트가
+    /// 파일명을 들고 있으므로 그걸 읽어 창을 다시 만든다. 속성기가 없는 펫이면 창도
+    /// 만들지 않는다.
+    private func loadSkillEffect(for sheet: SpriteSheet) {
+        flame?.hide()
+        flame = nil
+        guard let name = sheet.manifest.skill?.effect else { return }
+        let base = (name as NSString).deletingPathExtension
+        guard let url = Bundle.module.url(forResource: base, withExtension: "png", subdirectory: "effects"),
+              let image = NSImage(contentsOf: url), image.size.height > 0 else { return }
+        flameAspect = image.size.width / image.size.height
+        flame = FlameWindow(image: image)
     }
 
     // MARK: - Briefing
@@ -292,7 +311,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 중심을 유지해서 바꾸면 펫이 제자리에 있는 것처럼 보인다.
         if let win = window {
             let newSize = windowSize(for: sheet)
-            flame?.hide()
             if abs(newSize - win.frame.width) > 0.5 {
                 let center = CGPoint(x: win.frame.midX, y: win.frame.midY)
                 let origin = CGPoint(x: center.x - newSize / 2, y: center.y - newSize / 2)
@@ -303,6 +321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         petView?.setSpriteSheet(sheet)
+        loadSkillEffect(for: sheet)
         Self.savePetSlug(slug)
         rebuildMenu()
     }
