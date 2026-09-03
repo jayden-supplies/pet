@@ -184,6 +184,17 @@ final class PetView: NSView {
             item.isEnabled = spriteSheet.animation(named: name.rawValue) != nil
             menu.addItem(item)
         }
+
+        // 종료. 지금까지는 메뉴바 아이콘에서만 끌 수 있었는데, 펫이 눈앞에 있는데
+        // 메뉴바까지 올라가야 하는 게 번거롭다.
+        //
+        // 단축키는 일부러 안 붙였다. 메뉴가 열린 상태에서 글자 키가 그대로 먹으므로
+        // (a·s 가 그렇게 동작한다) 종료에까지 달면 오타 한 번에 앱이 꺼진다.
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "나가", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        quit.target = NSApp
+        menu.addItem(quit)
+
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
