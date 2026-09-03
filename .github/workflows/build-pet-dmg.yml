@@ -20,6 +20,7 @@ on:
           - '이브이 (Eevee)'
           - '치코리타 (Chikorita)'
           - '아차모 (Torchic)'
+          - '토게피 (Togepi)'
 
 permissions:
   contents: read

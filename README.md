@@ -246,7 +246,7 @@ swift run
 `swift run`으로 직접 띄우는 대신, 펫 하나만 골라서 더블클릭으로 설치되는 `.dmg`가 필요하면 `build-pet-dmg.yml` 워크플로우를 씁니다:
 
 1. GitHub 저장소의 **Actions** 탭 → **Build Pet DMG** 워크플로우 선택
-2. **Run workflow** 클릭 → `pet` 드롭다운에서 원하는 base pet(리아코/메타몽/파이리/꼬부기/꼬마돌/이브이/치코리타/아차모 중 하나, slug 기준) 선택 → 실행
+2. **Run workflow** 클릭 → `pet` 드롭다운에서 원하는 base pet(리아코/메타몽/파이리/꼬부기/꼬마돌/이브이/치코리타/아차모/토게피 중 하나, "한글 이름 (영문)" 표기) 선택 → 실행
 3. macOS 러너가 `AppDelegate.swift`의 `availablePetSlugs`를 (커밋하지 않고, 빌드 시점에만) 고른 펫 하나로 임시 치환한 뒤 `swift build -c release`로 빌드하고, `<Pet>.app`으로 번들링해서 `<Pet>.dmg`를 만듭니다. 진화형 스프라이트는 리소스 번들(`Resources/pets`) 전체가 항상 함께 들어가므로 별도 처리 없이도 진화가 정상 동작합니다.
 4. 실행이 끝나면 해당 워크플로우 실행 화면의 **Artifacts**에서 `<Pet>-pet-dmg`를 다운로드
 
