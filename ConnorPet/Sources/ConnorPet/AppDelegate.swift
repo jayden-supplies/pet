@@ -78,8 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // form regardless of XP. Default off.
     private var evolutionEnabled = false
 
-    // Whether the XP bar is always shown vs. only on hover (menu toggle).
-    private var barAlwaysVisible = true
+    // Whether the XP bar is always shown vs. only on hover (menu toggle). Default off.
+    private var barAlwaysVisible = false
     // Live XP state, so re-selecting a pet re-derives the right evolved form.
     private var currentStage = 0
     private var currentPercent: Double = 0
@@ -124,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let win = PetWindow(contentRect: contentRect)
         let view = PetView(spriteSheet: sheet)
         view.frame = NSRect(x: 0, y: 0, width: size, height: viewHeight)
-        barAlwaysVisible = Self.savedBarAlwaysVisible(fallback: true)
+        barAlwaysVisible = Self.savedBarAlwaysVisible(fallback: false)
         view.setBarAlwaysVisible(barAlwaysVisible)
         evolutionThresholds = Self.savedEvolutionThresholds(fallback: XPModel.stageThresholds)
         evolutionEnabled = Self.savedEvolutionEnabled(fallback: false)
@@ -644,7 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(always, forKey: barAlwaysVisibleDefaultsKey)
     }
 
-    // Defaults to `fallback` (true — bar always shown) when nothing saved yet.
+    // Defaults to `fallback` (false — bar hidden until hover) when nothing saved yet.
     private static func savedBarAlwaysVisible(fallback: Bool) -> Bool {
         guard UserDefaults.standard.object(forKey: barAlwaysVisibleDefaultsKey) != nil else { return fallback }
         return UserDefaults.standard.bool(forKey: barAlwaysVisibleDefaultsKey)
