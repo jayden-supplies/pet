@@ -124,10 +124,11 @@ final class PetView: NSView {
 
     // MARK: - Speaking
 
+    /// 브리핑 말풍선이 떠 있는 시간. 여러 세션을 훑어 읽을 수 있어야 한다.
+    static let briefingDuration: TimeInterval = 30
+
     private func speak(_ text: String) {
-        // Long briefings need to stay up long enough to actually read: a floor
-        // of 4s plus ~55ms per character, capped so it never sticks forever.
-        let duration = min(24.0, max(4.0, 4.0 + Double(text.count) * 0.055))
+        let duration = Self.briefingDuration
         speaking = true
         applyDisplayAnimation()
         onSpeak?(text, duration)

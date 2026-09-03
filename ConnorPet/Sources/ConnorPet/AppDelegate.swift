@@ -226,7 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let cache = BriefingSummarizer.cached(),
            cache.fingerprint == mark,
            Date().timeIntervalSince(cache.generatedAt) < BriefingSummarizer.cacheTTL {
-            return [prefix, cache.text].compactMap { $0 }.joined(separator: "\n")
+            return [prefix, cache.text].compactMap { $0 }.joined(separator: "\n\n")
         }
         BriefingSummarizer.refresh(briefs: briefs, perBriefChars: briefCharsPerSession)
         return render(briefs, prefix: prefix)
@@ -245,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             used += line.count
             lines.append(line)
         }
-        return lines.joined(separator: "\n")
+        return lines.joined(separator: "\n\n")
     }
 
     private func setUpStatusItem() {

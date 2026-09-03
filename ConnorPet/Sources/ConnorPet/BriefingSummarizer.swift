@@ -104,25 +104,30 @@ enum BriefingSummarizer {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { $0.hasPrefix("·") }
             guard !lines.isEmpty else { return }
-            write(text: lines.joined(separator: "\n"), fingerprint: mark)
+            // 줄 사이를 한 줄 띄운다. 말풍선에서 줄바꿈이 일어나면 어디서 한
+            // 세션이 끝나는지 구분이 안 된다.
+            write(text: lines.joined(separator: "\n\n"), fingerprint: mark)
         }
     }
 
     private static func buildPrompt(briefs: [SessionBrief], perBriefChars: Int) -> String {
         var out = """
-        아래는 여러 작업 세션에서 사용자가 최근에 요청한 내용이다.
-        각 세션이 지금 무엇을 하고 있는지 한 줄로 요약하라.
+        아래는 여러 작업 세션의 최근 대화 끝부분이다. 각 세션이 **어디까지 진행됐는지**
+        한 줄로 적어라. 무슨 주제인지가 아니라 진행 상태가 필요하다.
 
         - 세션 하나당 정확히 한 줄, \(perBriefChars)자 이내 한국어
-        - 형식은 "· [프로젝트명] 요약" 이고 다른 말은 절대 붙이지 않는다
+        - 형식은 "· [프로젝트명] 진행상태" 이고 다른 말은 절대 붙이지 않는다
         - 세션 순서를 그대로 유지한다
-        - 요약은 마지막 요청에 무게를 둔다. 지금 하고 있는 일이 무엇인지가 중요하다
+        - "무엇을 하는 중" 같은 주제 설명이 아니라, 무엇까지 끝났고 지금 무엇이
+          걸려 있는지를 적는다. 마지막 요청과 마지막 응답이 판단 근거다
+        - 다음에 이어서 하려면 무엇을 봐야 하는지가 드러나면 가장 좋다
 
         """
         for (i, brief) in briefs.enumerated() {
             out += "\n[세션\(i + 1) 프로젝트=\(brief.project)]\n"
             let material = brief.recent.isEmpty ? [brief.text] : brief.recent
-            for line in material { out += "\(line)\n" }
+            for line in material { out += "요청: \(line)\n" }
+            if let reply = brief.lastReply { out += "마지막 응답: \(reply)\n" }
         }
         return out
     }

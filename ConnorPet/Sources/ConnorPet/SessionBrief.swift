@@ -9,6 +9,9 @@ struct SessionBrief {
     /// 이 세션에서 **최근에** 요청한 것들. 첫 메시지가 세션의 목표라면 이쪽은
     /// 지금 무엇을 하고 있는지에 가깝다. 요약기가 이걸 재료로 쓴다.
     let recent: [String]
+    /// 그 세션에서 **마지막으로 나온 응답**. 어디까지 진행됐는지는 사용자가 뭘
+    /// 시켰는지만으로는 알 수 없고, 그래서 무엇이 됐는지가 있어야 판단된다.
+    let lastReply: String?
     let updatedAt: Date
     let isDesktop: Bool       // claude-desktop vs cli, for the "어디서" hint
 }
@@ -151,7 +154,7 @@ enum SessionBriefReader {
         }
 
         guard let id = sessionId, let text = opening else { return nil }
-        let recent = recentMessages(in: file)
+        let (recent, lastReply) = recentExchange(in: file)
         let project = cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "?"
         return (id, SessionBrief(
             id: id,
@@ -159,38 +162,66 @@ enum SessionBriefReader {
             branch: branch,
             text: truncate(text, to: perBriefChars),
             recent: recent,
+            lastReply: lastReply,
             updatedAt: modifiedAt,
             isDesktop: isDesktop
         ))
     }
 
-    /// 파일 끝에서 사용자가 최근 보낸 메시지들을 오래된 것부터 순서대로 뽑는다.
-    private static func recentMessages(in url: URL) -> [String] {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+    /// 파일 끝에서 최근 요청들과 마지막 응답을 함께 뽑는다.
+    /// 요청은 오래된 것부터 순서대로, 응답은 가장 마지막 것 하나.
+    private static func recentExchange(in url: URL) -> (recent: [String], lastReply: String?) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return ([], nil) }
         defer { try? handle.close() }
-        guard let size = try? handle.seekToEnd() else { return [] }
+        guard let size = try? handle.seekToEnd() else { return ([], nil) }
         let start = size > UInt64(readTailBytes) ? size - UInt64(readTailBytes) : 0
         try? handle.seek(toOffset: start)
-        guard let data = try? handle.readToEnd() else { return [] }
+        guard let data = try? handle.readToEnd() else { return ([], nil) }
 
         // 임의 위치에서 잘라 읽었으므로 첫 줄은 대개 반쪽짜리다. 그래서 1부터.
         var lines = data.split(separator: UInt8(ascii: "\n"))
         if start > 0, !lines.isEmpty { lines.removeFirst() }
 
         var found: [String] = []
+        var reply: String?
         for line in lines.reversed() {
             guard
                 let object = try? JSONSerialization.jsonObject(with: Data(line)),
                 let record = object as? [String: Any],
-                record["type"] as? String == "user",
-                (record["isSidechain"] as? Bool) != true,
-                let raw = userText(in: record),
-                let cleaned = clean(raw)
+                (record["isSidechain"] as? Bool) != true
             else { continue }
-            found.append(truncate(cleaned, to: recentMessageChars))
-            if found.count >= recentMessageCount { break }
+
+            switch record["type"] as? String {
+            case "assistant":
+                // 도구 호출만 있는 응답은 건너뛴다. 텍스트가 있는 마지막 응답이
+                // "무엇을 했는지"를 말해 준다.
+                if reply == nil, let text = assistantText(in: record), text.count >= 12 {
+                    reply = truncate(text, to: recentMessageChars)
+                }
+            case "user":
+                if let raw = userText(in: record), let cleaned = clean(raw) {
+                    found.append(truncate(cleaned, to: recentMessageChars))
+                }
+            default:
+                break
+            }
+            if found.count >= recentMessageCount, reply != nil { break }
         }
-        return found.reversed()
+        return (Array(found.prefix(recentMessageCount)).reversed(), reply)
+    }
+
+    /// assistant 레코드의 텍스트 블록만 이어 붙인다(도구 호출 블록은 뺀다).
+    private static func assistantText(in record: [String: Any]) -> String? {
+        guard let message = record["message"] as? [String: Any] else { return nil }
+        if let text = message["content"] as? String { return text }
+        guard let blocks = message["content"] as? [[String: Any]] else { return nil }
+        let text = blocks
+            .filter { $0["type"] as? String == "text" }
+            .compactMap { $0["text"] as? String }
+            .joined(separator: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     private static func readHead(of url: URL) -> Data? {
