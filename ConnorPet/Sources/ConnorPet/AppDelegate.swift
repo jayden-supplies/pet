@@ -174,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 x: win.frame.minX + mouthInFrame.x * scale,
                 y: win.frame.maxY - mouthInFrame.y * scale
             )
-            let length = win.frame.width * FlameWindow.lengthMultiplier * grow
+            let length = win.frame.width * FlameWindow.lengthMultiplier(forStage: self.currentStage) * grow
             flame.show(mouth: mouth, length: length, aspect: self.flameAspect)
             if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
                 FileHandle.standardError.write("[connor-pet] 이펙트 grow=\(grow) 길이=\(Int(length))pt\n".data(using: .utf8)!)
