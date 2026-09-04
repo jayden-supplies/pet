@@ -54,9 +54,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Which live status source drives the pet's animation. "claude-code" polls
     // ~/.claude/sessions/*.json every 250ms; "orca" polls Orca's last-status.json
-    // every 1s (see ClaudeCodeStatusWatcher/OrcaStatusWatcher).
-    private static let availableStatusSources = ["claude-code", "orca"]
-    private static let statusSourceDisplayNames = ["claude-code": "Claude Code", "orca": "Orca"]
+    // every 1s; "claude-desktop" watches the Claude desktop app via renderer CPU
+    // + the Notification Center DB (see ClaudeCodeStatusWatcher/OrcaStatusWatcher/
+    // ClaudeDesktopStatusWatcher).
+    private static let availableStatusSources = ["claude-code", "orca", "claude-desktop"]
+    private static let statusSourceDisplayNames = [
+        "claude-code": "Claude Code",
+        "orca": "Orca",
+        "claude-desktop": "Claude Desktop",
+    ]
     private var selectedStatusSource = availableStatusSources[0]
 
     // Evolution chains keyed by the base pet the user picks: stage 1 → first
@@ -617,7 +623,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startWatcher(for source: String) {
         watcher?.stop()
-        let newWatcher: AgentStatusWatching = (source == "orca") ? OrcaStatusWatcher() : ClaudeCodeStatusWatcher()
+        let newWatcher: AgentStatusWatching
+        switch source {
+        case "orca": newWatcher = OrcaStatusWatcher()
+        case "claude-desktop": newWatcher = ClaudeDesktopStatusWatcher()
+        default: newWatcher = ClaudeCodeStatusWatcher()
+        }
         newWatcher.onUpdate = { [weak self] result in
             self?.applyUpdate(result)
         }

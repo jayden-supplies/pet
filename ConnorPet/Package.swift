@@ -10,7 +10,15 @@ let package = Package(
             resources: [
                 .copy("Resources/pets"),
                 .copy("Resources/effects")
+            ],
+            // NotificationCenterDB reads macOS's Notification Center SQLite DB.
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
             ]
-        )
+        ),
+        .testTarget(
+            name: "ConnorPetTests",
+            dependencies: ["ConnorPet"]
+        ),
     ]
 )
