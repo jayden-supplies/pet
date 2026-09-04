@@ -194,30 +194,37 @@ final class ClaudeDesktopStatusWatcher: AgentStatusWatching {
         guard now >= notifCheckDeadline else { return }
         notifCheckDeadline = now.addingTimeInterval(notifCheckInterval)
 
-        guard let db = notifDB, let latest = db.latestNotificationDate(bundleID: Self.bundleID) else {
-            // DB unavailable (no Full Disk Access, or no Claude notifications
-            // ever). Mark baseline so we never retroactively fire a stale done.
-            if !notifBaselineSet {
-                notifBaselineSet = true
-                if notifDB?.isReadable != true { logNotifUnavailableOnce() }
-            }
+        // Gate the baseline on *readability*, not on whether any notification
+        // exists yet. An unreadable DB means no Full Disk Access, so we log once
+        // and hold off — deliberately leaving the baseline unset so that if the
+        // DB becomes readable later it baselines against whatever's actually
+        // there. (A readable-but-empty DB must still baseline, at 0, so the very
+        // first real completion notification fires 헤롱헤롱 instead of being
+        // swallowed as the baseline.)
+        guard let db = notifDB, db.isReadable else {
+            logNotifUnavailableOnce()
             return
         }
 
+        // May be nil when access is granted but Claude hasn't posted any
+        // notification yet — that's a valid "baseline is none (0)" state.
+        let latest = db.latestNotificationDate(bundleID: Self.bundleID)
+
         if !notifBaselineSet {
-            // First read: treat whatever's already there as already-seen, so a
-            // days-old notification doesn't trigger 헤롱헤롱 the moment we launch.
+            // First readable poll: treat whatever's already there (possibly
+            // nothing) as already-seen, so a days-old notification doesn't
+            // trigger 헤롱헤롱 the moment we launch.
             notifBaselineSet = true
-            acknowledgedNotifDate = latest
+            acknowledgedNotifDate = latest ?? 0
         }
-        latestNotifDate = latest
+        if let latest { latestNotifDate = latest }
     }
 
     private func logNotifUnavailableOnce() {
         guard !loggedNotifUnavailable else { return }
         loggedNotifUnavailable = true
         FileHandle.standardError.write(
-            "[connor-pet] claude-desktop: Notification Center DB not readable — done/헤롱헤롱 disabled. Grant Full Disk Access to enable it.\n"
+            "[connor-pet] claude-desktop: Notification Center DB not readable — falling back to CPU-only done detection. For notification-based 헤롱헤롱, grant Full Disk Access via the menu bar item \"전체 디스크 접근 권한 (헤롱헤롱 알림)\" and relaunch.\n"
                 .data(using: .utf8)!
         )
     }

@@ -504,6 +504,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hookItem.state = ClaudeHookInstaller.isInstalled() ? .on : .off
         menu.addItem(hookItem)
 
+        // The Claude Desktop source reads macOS's Notification Center DB to catch
+        // the app's "작업 완료" banner and show 헤롱헤롱 — that needs Full Disk
+        // Access. Checkmark = granted; clicking opens the settings pane. Without
+        // it the desktop source still works (CPU-only done), so this is opt-in.
+        let fdaGranted = FullDiskAccess.isGranted()
+        let fdaItem = NSMenuItem(title: "전체 디스크 접근 권한 (헤롱헤롱 알림)", action: #selector(openFullDiskAccess), keyEquivalent: "")
+        fdaItem.target = self
+        fdaItem.state = fdaGranted ? .on : .off
+        menu.addItem(fdaItem)
+
         menu.addItem(.separator())
         // When on, the XP bar is always visible; when off, it only appears while
         // hovering the pet. Default on (see savedBarAlwaysVisible).
@@ -563,6 +573,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         rebuildMenu()
+    }
+
+    /// Opens the Full Disk Access settings pane so the Claude Desktop source can
+    /// read the Notification Center DB (its 헤롱헤롱-on-완료-알림 signal). We can't
+    /// grant it from code — macOS requires the user to flip it and relaunch — so
+    /// we just guide them there. Already-granted just confirms.
+    @objc private func openFullDiskAccess() {
+        if FullDiskAccess.isGranted() {
+            showInfo(
+                title: "전체 디스크 접근 권한 있음",
+                text: "이미 권한이 있어요.\nClaude Desktop 소스에서 '작업 완료' 알림으로도\n헤롱헤롱을 감지합니다."
+            )
+            return
+        }
+        guard BattleDialog.confirm(
+            title: "전체 디스크 접근 권한 필요",
+            message: "Claude Desktop 소스가 '작업 완료' 알림으로 헤롱헤롱을\n감지하려면 전체 디스크 접근 권한이 필요합니다.\n(없어도 CPU 기준으로는 감지하지만 덜 정확해요.)\n\n시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크\n접근에서 ConnorPet을 켠 뒤 앱을 다시 실행하세요.",
+            confirmTitle: "시스템 설정 열기"
+        ) else { return }
+        FullDiskAccess.openSettings()
     }
 
     @objc private func toggleBarAlwaysVisible() {
