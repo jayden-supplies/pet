@@ -13,6 +13,10 @@ same entries/state parsing works for both sources:
 
 Usage: python3 claude_hook_status.py <working|blocked|done|remove>
 (state comes from argv[1]; session_id/cwd come from the hook's stdin JSON)
+
+"working" and "done" are upgraded to "failed" when the most recent tool result
+in the session's transcript is an error — see last_tool_errored() for why that
+has to be read out of the transcript rather than taken from the hook payload.
 """
 import fcntl
 import json
@@ -22,6 +26,51 @@ import time
 
 STATUS_FILE = os.path.expanduser("~/.claude/connor-pet-status.json")
 LOCK_FILE = STATUS_FILE + ".lock"
+
+# How much of the transcript's tail to inspect for a failed tool. Transcripts
+# reach tens of MB (a 31MB session was observed), so this is seeked from the
+# end rather than read from the top.
+TRANSCRIPT_TAIL_BYTES = 256 * 1024
+TRANSCRIPT_TAIL_LINES = 80
+
+
+def last_tool_errored(transcript_path):
+    """True when the most recent tool result in the transcript is an error.
+
+    Why read the transcript at all: the PostToolUse hook does **not** fire when
+    a tool fails (verified against a live session), so a failure never reaches
+    us as a hook event. It does land in the transcript, as a tool_result block
+    with "is_error": true — and the hook payload hands us transcript_path, so
+    the tail is right there.
+
+    Only the *last* tool result counts. A tool that failed and was then retried
+    successfully is not a failure the user needs to see; a turn whose final
+    tool errored is.
+    """
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return False
+    try:
+        with open(transcript_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - TRANSCRIPT_TAIL_BYTES))
+            # The first line after an arbitrary seek is usually a partial
+            # record; dropping it is why the slice starts at 1.
+            lines = f.read().splitlines()[1:][-TRANSCRIPT_TAIL_LINES:]
+    except OSError:
+        return False
+
+    for raw in reversed(lines):
+        try:
+            record = json.loads(raw)
+        except Exception:
+            continue
+        content = (record.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for block in reversed(content):
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                return bool(block.get("is_error"))
+    return False
 
 
 def main():
@@ -60,8 +109,11 @@ def main():
             if action == "remove":
                 doc["entries"].pop(session_id, None)
             else:
+                state = action
+                if action in ("working", "done") and last_tool_errored(payload.get("transcript_path")):
+                    state = "failed"
                 doc["entries"][session_id] = {
-                    "state": action,
+                    "state": state,
                     "worktreeId": cwd,
                     "receivedAt": int(time.time() * 1000),
                 }

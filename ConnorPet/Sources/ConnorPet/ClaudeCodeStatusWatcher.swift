@@ -32,10 +32,16 @@ import Foundation
 final class ClaudeCodeStatusWatcher: AgentStatusWatching {
     private let sessionsDir: URL
     private let hookStatusFileURL: URL
+    private let projectsDir: URL
     private let pollInterval: TimeInterval
     private var timer: Timer?
     private var lastFingerprint: [String: Date] = [:]
     private var acknowledgedAtMs: Double = 0
+
+    private let tokenReader = TranscriptTokenReader()
+    // Resolved `<sessionId>.jsonl` paths, cached so we don't rescan the
+    // projects tree every poll. A session's transcript never changes location.
+    private var transcriptPathCache: [String: String] = [:]
 
     var onUpdate: ((AgentStateAnimationResult) -> Void)?
 
@@ -43,6 +49,7 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
         let home = FileManager.default.homeDirectoryForCurrentUser
         self.sessionsDir = home.appendingPathComponent(".claude/sessions")
         self.hookStatusFileURL = home.appendingPathComponent(".claude/connor-pet-status.json")
+        self.projectsDir = home.appendingPathComponent(".claude/projects")
         self.pollInterval = pollInterval
     }
 
@@ -80,6 +87,13 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
         }
         let hookAttrs = try? FileManager.default.attributesOfItem(atPath: hookStatusFileURL.path)
         fingerprint["connor-pet-status.json"] = (hookAttrs?[.modificationDate] as? Date) ?? .distantPast
+        // Also fold in the transcripts we already resolved on prior polls, so a
+        // token count that grows mid-turn refreshes the XP bar even in the rare
+        // window where the session file itself didn't change.
+        for (sessionId, path) in transcriptPathCache {
+            let mtime = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date
+            fingerprint["transcript:\(sessionId)"] = mtime ?? .distantPast
+        }
         if fingerprint == lastFingerprint {
             return
         }
@@ -102,13 +116,15 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
         for (sessionId, session) in sessionsById {
             guard session.alive else { continue }
             let label = "claude-code:\(session.name ?? sessionId)"
+            let transcriptPath = transcriptPath(forSessionId: sessionId)
             if let hookEntry = hookEntriesById[sessionId] {
                 entries.append(AgentStatusEntry(
                     paneKey: label,
                     state: hookEntry.state,
                     workingMode: nil,
                     worktreeId: hookEntry.worktreeId ?? session.cwd,
-                    updatedAt: hookEntry.updatedAt
+                    updatedAt: hookEntry.updatedAt,
+                    transcriptPath: transcriptPath
                 ))
             } else {
                 entries.append(AgentStatusEntry(
@@ -116,7 +132,8 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
                     state: session.busyIdleState,
                     workingMode: nil,
                     worktreeId: session.cwd,
-                    updatedAt: session.updatedAt
+                    updatedAt: session.updatedAt,
+                    transcriptPath: transcriptPath
                 ))
             }
         }
@@ -129,6 +146,26 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
         }
 
         publish(entries: entries)
+    }
+
+    /// Finds `~/.claude/projects/<cwd-slug>/<sessionId>.jsonl` without having to
+    /// reproduce Claude Code's cwd→slug transformation: the sessionId is unique,
+    /// so we just look for that filename under any project subdir. Cached once
+    /// resolved (a session's transcript never moves).
+    private func transcriptPath(forSessionId sessionId: String) -> String? {
+        if let cached = transcriptPathCache[sessionId] { return cached }
+        guard let projectDirs = try? FileManager.default.contentsOfDirectory(
+            at: projectsDir, includingPropertiesForKeys: nil
+        ) else { return nil }
+        let filename = "\(sessionId).jsonl"
+        for dir in projectDirs {
+            let candidate = dir.appendingPathComponent(filename)
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                transcriptPathCache[sessionId] = candidate.path
+                return candidate.path
+            }
+        }
+        return nil
     }
 
     private struct SessionInfo {
@@ -179,10 +216,12 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
 
     private func publish(entries: [AgentStatusEntry]) {
         let now = Date().timeIntervalSince1970 * 1000
-        let suppressed = suppressAcknowledgedDone(entries, acknowledgedAtMs: acknowledgedAtMs)
-        let result = agentStateAnimation(entries: suppressed, retainedCount: 0, now: now)
+        let decayed = decayStaleStates(entries, now: now)
+        let suppressed = suppressAcknowledgedDone(decayed, acknowledgedAtMs: acknowledgedAtMs)
+        var result = agentStateAnimation(entries: suppressed, retainedCount: 0, now: now)
+        result.gainedTokens = tokenReader.accrued(for: entries)
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
-            FileHandle.standardError.write("[connor-pet] claude-code: \(entries.count) session(s) -> \(result.animation)\n".data(using: .utf8)!)
+            FileHandle.standardError.write("[connor-pet] claude-code: \(entries.count) session(s) -> \(result.animation), +\(Int(result.gainedTokens)) tokens\n".data(using: .utf8)!)
             for line in result.trace { FileHandle.standardError.write("  \(line.line)\n".data(using: .utf8)!) }
         }
         DispatchQueue.main.async { [weak self] in

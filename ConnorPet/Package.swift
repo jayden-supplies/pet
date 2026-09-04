@@ -8,7 +8,8 @@ let package = Package(
         .executableTarget(
             name: "ConnorPet",
             resources: [
-                .copy("Resources/pets")
+                .copy("Resources/pets"),
+                .copy("Resources/effects")
             ],
             // NotificationCenterDB reads macOS's Notification Center SQLite DB.
             linkerSettings: [
