@@ -260,6 +260,30 @@ PETS = [
             "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
         ),
     },
+    {
+        "slug": "snorlax",
+        "dex_id": 143,
+        "out_dir_name": "snorlax.codex-pet",
+        "id": "snorlax-jamanbo",
+        "display_name": "잠만보 (Snorlax)",
+        "description": (
+            "Custom connor-pet build: Snorlax / 잠만보 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
+    {
+        "slug": "gengar",
+        "dex_id": 94,
+        "out_dir_name": "gengar.codex-pet",
+        "id": "gengar-pantom",
+        "display_name": "팬텀 (Gengar)",
+        "description": (
+            "Custom connor-pet build: Gengar / 팬텀 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
 ]
 
 

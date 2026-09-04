@@ -21,6 +21,9 @@ on:
           - '치코리타 (Chikorita)'
           - '아차모 (Torchic)'
           - '토게피 (Togepi)'
+          - '뚜꾸리 (Tepig)'
+          - '잠만보 (Snorlax)'
+          - '팬텀 (Gengar)'
 
 permissions:
   contents: read

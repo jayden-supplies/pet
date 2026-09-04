@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // (see scripts/build_sheet.py's PETS list, which is the source of truth for
     // this set). Display names shown in the menu come from each pet's own
     // manifest rather than being duplicated here.
-    private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic", "togepi", "tepig"]
+    private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic", "togepi", "tepig", "snorlax", "gengar"]
     private var petDisplayNames: [String: String] = [:]
     private var selectedPetSlug = availablePetSlugs[0]
 
@@ -82,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "eevee": ["vaporeon"],
         "ditto": [],
         "togepi": [],
+        "snorlax": [],
+        "gengar": [],
     ]
 
     // Whether the pet evolves at all (menu toggle). When off it stays the base
@@ -549,6 +551,27 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
             menuItem.state = (source == selectedStatusSource) ? .on : .off
             menu.addItem(menuItem)
         }
+
+        // Installs the Claude Code hooks (into ~/.claude/settings.json) that add
+        // the 얼음(blocked)/헤롱헤롱(done) states on top of the plain busy/idle a
+        // DMG user gets by default — the in-app path to
+        // scripts/install_claude_hooks.py, which they can't run without the repo.
+        // Checkmark reflects whether the hooks are currently installed.
+        let hookItem = NSMenuItem(title: "Claude Code 상태 훅 (얼음/헤롱헤롱)", action: #selector(toggleClaudeHooks), keyEquivalent: "")
+        hookItem.target = self
+        hookItem.state = ClaudeHookInstaller.isInstalled() ? .on : .off
+        menu.addItem(hookItem)
+
+        // The Claude Desktop source reads macOS's Notification Center DB to catch
+        // the app's "작업 완료" banner and show 헤롱헤롱 — that needs Full Disk
+        // Access. Checkmark = granted; clicking opens the settings pane. Without
+        // it the desktop source still works (CPU-only done), so this is opt-in.
+        let fdaGranted = FullDiskAccess.isGranted()
+        let fdaItem = NSMenuItem(title: "전체 디스크 접근 권한 (헤롱헤롱 알림)", action: #selector(openFullDiskAccess), keyEquivalent: "")
+        fdaItem.target = self
+        fdaItem.state = fdaGranted ? .on : .off
+        menu.addItem(fdaItem)
+
         menu.addItem(.separator())
         // When on, the XP bar is always visible; when off, it only appears while
         // hovering the pet. Default on (see savedBarAlwaysVisible).
@@ -577,6 +600,58 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         quitItem.target = self
         menu.addItem(quitItem)
         statusItem?.menu = menu
+    }
+
+    /// Installs or removes the Claude Code status hooks. Because this writes to
+    /// the global ~/.claude/settings.json, we confirm first (the click is the
+    /// consent the README talks about) and back the file up before touching it.
+    @objc private func toggleClaudeHooks() {
+        if ClaudeHookInstaller.isInstalled() {
+            guard BattleDialog.confirm(
+                title: "Claude Code 상태 훅 제거",
+                message: "~/.claude/settings.json에서 connor-pet이 추가한\n훅을 제거합니다. 얼음/헤롱헤롱 상태 표시가 꺼지고\nbusy/idle 만 남습니다.\n\n다른 훅 설정은 건드리지 않습니다.",
+                confirmTitle: "제거"
+            ) else { return }
+            do {
+                try ClaudeHookInstaller.uninstall()
+                showInfo(title: "훅 제거 완료", text: "Claude Code 상태 훅을 제거했어요.\n실행 중인 Claude Code 세션은 다음 턴부터 반영돼요.")
+            } catch {
+                showInfo(title: "훅 제거 실패", text: error.localizedDescription)
+            }
+        } else {
+            guard BattleDialog.confirm(
+                title: "Claude Code 상태 훅 설치",
+                message: "~/.claude/settings.json에 6개의 훅을 추가해\n얼음(권한 대기)·헤롱헤롱(작업 완료) 상태를\n표시합니다.\n\n기존 설정은 타임스탬프를 붙여 백업하고,\n다른 훅은 건드리지 않습니다. (python3 필요)",
+                confirmTitle: "설치"
+            ) else { return }
+            do {
+                try ClaudeHookInstaller.install()
+                showInfo(title: "훅 설치 완료", text: "Claude Code 상태 훅을 설치했어요.\n소스가 'Claude Code'일 때 얼음/헤롱헤롱까지 보여요.\n실행 중인 세션은 다음 턴부터 반영돼요.")
+            } catch {
+                showInfo(title: "훅 설치 실패", text: error.localizedDescription)
+            }
+        }
+        rebuildMenu()
+    }
+
+    /// Opens the Full Disk Access settings pane so the Claude Desktop source can
+    /// read the Notification Center DB (its 헤롱헤롱-on-완료-알림 signal). We can't
+    /// grant it from code — macOS requires the user to flip it and relaunch — so
+    /// we just guide them there. Already-granted just confirms.
+    @objc private func openFullDiskAccess() {
+        if FullDiskAccess.isGranted() {
+            showInfo(
+                title: "전체 디스크 접근 권한 있음",
+                text: "이미 권한이 있어요.\nClaude Desktop 소스에서 '작업 완료' 알림으로도\n헤롱헤롱을 감지합니다."
+            )
+            return
+        }
+        guard BattleDialog.confirm(
+            title: "전체 디스크 접근 권한 필요",
+            message: "Claude Desktop 소스가 '작업 완료' 알림으로 헤롱헤롱을\n감지하려면 전체 디스크 접근 권한이 필요합니다.\n(없어도 CPU 기준으로는 감지하지만 덜 정확해요.)\n\n시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크\n접근에서 ConnorPet을 켠 뒤 앱을 다시 실행하세요.",
+            confirmTitle: "시스템 설정 열기"
+        ) else { return }
+        FullDiskAccess.openSettings()
     }
 
     @objc private func toggleBarAlwaysVisible() {
@@ -814,7 +889,7 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
     // Bundle.module still covers plain `swift run`/`.build/release/ConnorPet`,
     // where Bundle.main.resourceURL already points at the same flat directory
     // the loose bundle sits in.
-    private static let resourceBundle: Bundle = {
+    static let resourceBundle: Bundle = {
         if let resourceURL = Bundle.main.resourceURL {
             let candidate = resourceURL.appendingPathComponent("ConnorPet_ConnorPet.bundle")
             if let bundle = Bundle(url: candidate) { return bundle }
