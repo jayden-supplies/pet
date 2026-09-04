@@ -30,8 +30,8 @@ final class PetView: NSView {
     private var dragging = false
     private var dragDirection: PetDragDirection?
     private var hovering = false
-    /// 호버 중에만 바 위에 뜨는 상세 문구.
-    private var progressDetail = ""
+    /// 호버 중에만 뜨는 상세 문구. 그리기는 XPDetailWindow 가 한다.
+    private(set) var progressDetail = ""
     private var dragBaselineX: CGFloat = 0
     private var dragOffset: CGPoint = .zero
     private var didDragThisGesture = false
@@ -68,6 +68,9 @@ final class PetView: NSView {
     /// Fires once each time the pointer enters the pet — the "you noticed it"
     /// gesture AppDelegate uses to dismiss a lingering review/헤롱헤롱 state.
     var onHoverEnter: (() -> Void)?
+    /// 호버가 켜지고 꺼질 때. 경험치 상세 창을 여닫는 데 쓴다 — 그 문구는 펫 창보다
+    /// 길어서 별도 창(XPDetailWindow)에 그린다.
+    var onHoverChanged: ((Bool) -> Void)?
 
     init(spriteSheet: SpriteSheet) {
         self.spriteSheet = spriteSheet
@@ -371,32 +374,6 @@ final class PetView: NSView {
         if barAlwaysVisible || hovering {
             drawXPBar(in: barArea)
         }
-        // 숫자는 호버할 때만 띄운다. 늘 떠 있으면 펫보다 글자가 먼저 보인다.
-        if hovering {
-            drawXPDetail(above: barArea)
-        }
-    }
-
-    /// 바 바로 위에 상세 문구를 그린다. 프레임 아래쪽 여백은 바가 다 쓰고 있어서
-    /// 스프라이트 영역 하단에 겹쳐 올리는데, 호버 중에만 보이므로 방해되지 않는다.
-    /// 배경이 밝든 어둡든 읽히도록 검은 그림자를 깔았다.
-    private func drawXPDetail(above area: NSRect) {
-        guard !progressDetail.isEmpty else { return }
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor(calibratedWhite: 0, alpha: 0.9)
-        shadow.shadowBlurRadius = 3
-        shadow.shadowOffset = .zero
-        let attrs: [NSAttributedString.Key: Any] = [
-            // 숫자 폭이 고정돼야 값이 바뀔 때 글자가 덜 흔들린다.
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
-            .foregroundColor: NSColor.white,
-            .shadow: shadow,
-        ]
-        let text = progressDetail as NSString
-        let size = text.size(withAttributes: attrs)
-        // 프레임보다 길면 잘리므로 가운데 정렬 후 좌우로 밀어 넣는다.
-        let x = min(max(2, area.midX - size.width / 2), max(2, bounds.width - size.width - 2))
-        text.draw(at: NSPoint(x: x, y: area.maxY + 1), withAttributes: attrs)
     }
 
     private func drawXPBar(in area: NSRect) {
@@ -447,12 +424,14 @@ final class PetView: NSView {
     override func mouseEntered(with event: NSEvent) {
         hovering = true
         onHoverEnter?()
+        onHoverChanged?(true)
         applyDisplayAnimation()
         if !barAlwaysVisible { needsDisplay = true } // reveal hover-only bar
     }
 
     override func mouseExited(with event: NSEvent) {
         hovering = false
+        onHoverChanged?(false)
         applyDisplayAnimation()
         if !barAlwaysVisible { needsDisplay = true } // hide hover-only bar again
     }

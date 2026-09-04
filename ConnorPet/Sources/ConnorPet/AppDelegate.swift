@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var bubble: SpeechBubbleWindow?
     private var flame: FlameWindow?
+    private var xpDetailWindow: XPDetailWindow?
+    private var xpHovering = false
     private var flameAspect: CGFloat = 1.47
 
     // 브리핑 범위는 2단이다.
@@ -153,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.saveOrigin(newOrigin)
             self?.bubble?.hide() // the bubble does not follow a drag; drop it
             self?.flame?.hide()  // 불길도 창을 따라오지 않는다
+            self?.xpDetailWindow?.hide()
         }
         view.onClick = { [weak self] in self?.briefingText() }
         view.onSpeak = { [weak self] text, duration in
@@ -191,17 +194,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.onHoverEnter = { [weak self] in
             self?.watcher?.acknowledgeDone()
         }
+        view.onHoverChanged = { [weak self] on in
+            self?.xpHovering = on
+            self?.updateXPDetailWindow()
+        }
         win.contentView = view
         win.makeKeyAndOrderFront(nil)
 
         window = win
         petView = view
         bubble = SpeechBubbleWindow()
+        xpDetailWindow = XPDetailWindow()
         loadSkillEffect(for: sheet)
 
         setUpStatusItem()
 
-        selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
+selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
         startWatcher(for: selectedStatusSource)
 
         startBattleService()
@@ -649,7 +657,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyStage()
     }
 
-    /// 호버할 때 바 위에 뜨는 문구. "EXP 100,000 / 200,000,000 - 0.05%" 꼴이다.
+    /// 호버 중이면 펫 아래에 상세 문구를 띄우고, 아니면 감춘다. 값이 갱신될 때마다
+    /// 다시 부르므로 떠 있는 동안에도 숫자가 실시간으로 바뀐다.
+    private func updateXPDetailWindow() {
+        guard xpHovering, let petFrame = window?.frame, let view = petView else {
+            xpDetailWindow?.hide()
+            return
+        }
+        xpDetailWindow?.show(text: view.progressDetail, below: petFrame)
+    }
+
+    /// 호버할 때 펫 아래에 뜨는 문구. "EXP 100,000 / 200,000,000 - 0.05%" 꼴이다.
     /// 분모는 **다음 진화 지점**이라, 진화할 때마다 기준이 올라간다.
     private static func xpDetail(tokens: Double) -> String {
         let p = XPModel.progress(tokens: tokens)
@@ -673,6 +691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let stage = evolutionEnabled ? XPModel.stage(tokens: tokens) : 0
         petView?.setProgress(percent: currentPercent, stage: stage,
                              detail: Self.xpDetail(tokens: tokens))
+        updateXPDetailWindow()
         if stage != currentStage {
             currentStage = stage
             refreshDisplayedPet()
