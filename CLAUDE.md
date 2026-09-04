@@ -19,6 +19,7 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
   - `Sources/ConnorPet/Resources/pets/<slug>/` — 펫별 `spritesheet.png` + `pet.json` 번들 사본
 - `<slug>.codex-pet/` (totodile/ditto/charmander/squirtle/geodude/eevee/chikorita/torchic/togepi) — Orca에 직접 임포트 가능한 번들
 - `scripts/build_sheet.py` — PokeAPI에서 스프라이트를 다시 받아 각 펫의 시트를 재생성 (`PETS` 리스트가 소스 오브 트루스)
+- `scripts/make_app.sh` — release 빌드를 독립 실행형 `ConnorPet.app`으로 감싸서 `~/Applications`에 설치 (터미널과 무관하게 상주시키는 정식 실행 경로)
 - `scripts/simulate_agent.py` — 실제 에이전트 없이 `last-status.json`에 가짜 상태 주입 (Orca 소스 전용)
 - `scripts/install_claude_hooks.py` — 위 훅 핸들러를 `~/.claude/settings.json`에 병합/제거(`--uninstall`)하는 설치 스크립트. 기존 훅(matcher 걸린 것 포함) 안 건드리고, 재실행해도 중복 안 됨
 - `scripts/claude_hook_status.py` — Claude Code 훅 핸들러 (선택 설치, README "Claude Code 훅으로 얼음/헤롱헤롱까지 보기" 참고). `~/.claude/settings.json`은 전역 설정이라 **사용자 명시적 동의 없이 이 저장소가 대신 실행하지 않는다** — 스크립트/README로 안내만 하고, 사용자가 직접 돌리거나 명시적으로 요청해야 실행
@@ -30,9 +31,16 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
 ```sh
 cd ConnorPet
 swift build          # 컴파일만 확인
-swift run            # 실제 앱 실행
+swift run            # 개발 중 실행 (터미널의 자식 프로세스 — 터미널 닫으면 죽는다)
 CONNORPET_DEBUG=1 swift run   # 상태 판정 로그를 stderr로 출력
 ```
+
+사용자가 실제로 쓰는 상주 실행은 `.app` 번들 쪽이다 (저장소 루트에서):
+```sh
+./scripts/make_app.sh                  # ~/Applications/ConnorPet.app 생성·교체
+open -a ~/Applications/ConnorPet.app
+```
+리소스를 `Bundle.module`로 읽으므로 번들에는 바이너리와 함께 SwiftPM이 만든 `ConnorPet_ConnorPet.bundle`이 `Contents/Resources/`에 들어가야 한다. 바이너리만 복사하면 스프라이트를 못 찾아 실행 즉시 `fatalError`로 죽는다.
 
 에이전트 상태 없이 테스트:
 ```sh
