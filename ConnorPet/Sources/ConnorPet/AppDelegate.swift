@@ -267,6 +267,16 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         service.onBattleStart = { [weak self] myRole, outcome, oppName, oppPet in
             self?.presentBattle(myRole: myRole, outcome: outcome, opponentName: oppName, opponentPet: oppPet)
         }
+        // 전투 계산에 들어갈 내 성장 파워. 지금 화면에 있는 펫 기준이다.
+        service.localPower = { [weak self] in
+            guard let self else { return 0 }
+            let tokens = self.petTokens[self.selectedPetSlug] ?? 0
+            let stage = self.evolutionEnabled ? XPModel.stage(tokens: tokens) : 0
+            return battlePower(tokens: tokens, stage: stage)
+        }
+        service.onStare = { [weak self] fromName, fromPet in
+            self?.presentStare(fromName: fromName, fromPet: fromPet)
+        }
         service.start()
         battleService = service
     }
@@ -343,6 +353,46 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
     /// Builds the "대전" item. Its submenu lists everyone currently discovered on
     /// the same Wi-Fi; picking one sends them a challenge. Shows a disabled
     /// placeholder while nobody's around yet.
+    /// 누가 노려봤을 때 뜨는 알림. 확인 버튼 하나뿐이다.
+    private func presentStare(fromName: String, fromPet: String) {
+        BattleDialog.info(title: "노려보기",
+                          message: "\(fromName)의 \(Self.koreanPetName(fromPet))가\n노려봅니다.")
+    }
+
+    /// 매니페스트의 표시 이름("파이리 (Charmander)")에서 한글 이름만 뽑는다.
+    /// 모르는 slug 면 slug 를 그대로 쓴다 — 상대가 우리에게 없는 펫을 쓸 수도 있다.
+    private static func koreanPetName(_ slug: String) -> String {
+        guard let sheet = try? loadSpriteSheet(slug: slug),
+              let display = sheet.manifest.displayName else { return slug }
+        return display.components(separatedBy: " (").first ?? display
+    }
+
+    private func makeStareMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "노려보기", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        if battlePeers.isEmpty {
+            let empty = NSMenuItem(title: "주변에 상대가 없어요", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+        } else {
+            for peer in battlePeers {
+                let sub = NSMenuItem(title: "\(peer.name) 노려보기", action: #selector(starePeer(_:)), keyEquivalent: "")
+                sub.target = self
+                sub.representedObject = peer.id
+                sub.isEnabled = true
+                submenu.addItem(sub)
+            }
+        }
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func starePeer(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let peer = battlePeers.first(where: { $0.id == id }) else { return }
+        battleService?.stare(at: peer)
+    }
+
     private func makeBattleMenuItem() -> NSMenuItem {
         let battleItem = NSMenuItem(title: "대전", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -520,6 +570,7 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
 
         menu.addItem(.separator())
         menu.addItem(makeBattleMenuItem())
+        menu.addItem(makeStareMenuItem())
 
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
