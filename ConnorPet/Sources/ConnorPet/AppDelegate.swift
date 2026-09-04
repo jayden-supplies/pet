@@ -211,7 +211,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BriefingSummarizer.refresh(briefs: currentBriefs().briefs,
                                    perBriefChars: briefCharsPerSession)
 
-        }
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
             let text = briefingText() ?? "(브리핑 없음)"
             FileHandle.standardError.write("[connor-pet] 클릭 브리핑 미리보기 (\(text.count)자):\n\(text)\n".data(using: .utf8)!)
