@@ -16,7 +16,7 @@ enum BattleRole: String, Codable {
 /// defender turned away and hopped back — the projectile misses and `damage` is
 /// 0; otherwise it connects for `damage`. Both peers compute the same dodges
 /// from the shared seed, so the miss animation lines up on both screens.
-struct BattleRound: Equatable {
+struct BattleRound: Equatable, Codable {
     let attacker: BattleRole
     let damage: Int
     let dodged: Bool
@@ -27,10 +27,10 @@ struct BattleRound: Equatable {
     var missed: Bool { dodged || countered }
 }
 
-/// The full deterministic result of one battle. `rounds` is the blow-by-blow
-/// used to drive the on-screen projectile animation; `winner` is who's left
-/// standing. Both peers compute this identically from the shared seed.
-struct BattleOutcome: Equatable {
+/// 한 판의 전체 결과. `rounds` 는 화면에 그릴 공격 순서, `winner` 는 살아남은 쪽이다.
+/// **받는 쪽(accepter)이 계산해서 그대로 보내 준다** — 양쪽이 각자 돌리면 규칙이 한 줄만
+/// 달라도 서로 다른 승자가 나온다. Codable 인 이유가 이것이다.
+struct BattleOutcome: Equatable, Codable {
     let rounds: [BattleRound]
     let winner: BattleRole
     let startHP: Int

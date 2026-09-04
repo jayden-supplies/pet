@@ -279,6 +279,10 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         service.onStare = { [weak self] fromName, fromPet in
             self?.presentStare(fromName: fromName, fromPet: fromPet)
         }
+        service.onIncompatiblePeer = { [weak self] fromName in
+            self?.showInfo(title: "버전이 달라요",
+                           text: "\(fromName)님이 대전을 걸었지만 앱 버전이 달라 시작하지 못했어요.\n양쪽 모두 최신 버전으로 업데이트해 주세요.")
+        }
         service.start()
         battleService = service
     }
@@ -305,6 +309,9 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
                 self?.showInfo(title: "대전 거절됨", text: "\(peer.name)님이 대전을 거절했어요.")
             case .failed:
                 self?.showInfo(title: "대전 실패", text: "\(peer.name)님과 연결하지 못했어요.")
+            case .incompatible:
+                self?.showInfo(title: "버전이 달라요",
+                               text: "\(peer.name)님의 앱이 다른 버전이라 대전할 수 없어요.\n양쪽 모두 최신 버전으로 업데이트해 주세요.")
             }
         }
     }

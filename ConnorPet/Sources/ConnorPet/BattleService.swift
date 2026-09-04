@@ -17,17 +17,19 @@ struct BattlePeer: Equatable {
 /// Wire protocol between two apps. One flat Codable envelope keeps framing
 /// trivial; unused fields stay nil per message kind.
 ///
-///   challenger →  challenge {fromID, fromName, fromPet, power}
-///   accepter   →  accept {fromID, fromName, fromPet, power, seed}  (accepter picks the seed)
+///   challenger →  challenge {version, fromID, fromName, fromPet, power}
+///   accepter   →  accept {version, fromID, fromName, fromPet, seed, outcome}
 ///                 or decline {}
 ///   누구든    →  stare {fromID, fromName, fromPet}   (노려보기 — 응답 없음)
 ///
-/// `power` 를 서로 실어 보내는 이유: 전투 계산에 양쪽의 성장 상태가 들어가는데,
-/// 시드만으로는 상대의 파워를 알 수 없어 두 기기의 계산이 갈린다. challenge 와
-/// accept 각각에 자기 파워를 담으면 그 시점에 양쪽 모두 두 값을 갖게 된다.
+/// **결과는 받는 쪽(accepter)이 계산해서 통째로 보낸다.** 예전에는 시드만 주고받고
+/// 양쪽이 각자 simulateBattle 을 돌렸는데, 그 방식은 두 앱의 전투 규칙이 완전히
+/// 같을 때만 성립한다. 한쪽만 업데이트해 회피율이 25%→10% 로 바뀌자 같은 시드에서
+/// 서로 다른 승자가 나왔고, 두 화면에 동시에 "WIN" 이 뜨거나 동시에 "LOSE" 가 떴다.
+/// 계산 주체를 한쪽으로 몰면 규칙이 앞으로 또 바뀌어도 이 문제가 재발하지 않는다.
 ///
-/// 그 뒤로는 추가 통신이 없다 — 같은 시드와 같은 파워로 각자 simulateBattle 을
-/// 돌려 동일한 결과를 재생한다.
+/// `version` 은 그래도 남겨 둔다 — 결과를 보낼 줄 모르는 구버전과 만나면 대전을
+/// 시작하지 않고 "버전이 다르다"고 알려 준다. 틀린 승패를 보여 주는 것보다 낫다.
 struct BattleMessage: Codable {
     enum Kind: String, Codable {
         case challenge
@@ -36,13 +38,21 @@ struct BattleMessage: Codable {
         case stare
     }
     let type: Kind
+    /// 전투 규칙·프로토콜 세대. 구버전은 이 필드를 보내지 않아 nil 로 들어온다.
+    var version: Int?
     var fromID: String?
     var fromName: String?
     var fromPet: String?
     var seed: UInt64?
-    /// 보내는 쪽 펫의 성장 파워(0...1). 예전 버전과 주고받으면 nil 이라 0 으로 본다.
+    /// 도전하는 쪽 펫의 성장 파워(0...1). 받는 쪽이 전투를 계산할 때 쓴다.
     var power: Double?
+    /// 받는 쪽이 계산한 전투 결과. accept 에만 담긴다.
+    var outcome: BattleOutcome?
 }
+
+/// 전투 규칙과 메시지 형식의 세대. 규칙을 바꿀 때마다 올린다 — 다른 세대끼리는
+/// 대전을 시작하지 않는다.
+let battleProtocolVersion = 2
 
 /// The Bonjour service type every copy of this app advertises and browses for.
 /// (Must be ≤15 chars, letters/digits/hyphen — "connorpet" fits.)
@@ -77,6 +87,12 @@ final class BattleService {
     var onBattleStart: ((_ myRole: BattleRole, _ outcome: BattleOutcome, _ opponentName: String, _ opponentPet: String) -> Void)?
     /// 누가 노려봤을 때. (보낸 사람 이름, 그쪽 펫 slug)
     var onStare: ((_ fromName: String, _ fromPet: String) -> Void)?
+    /// 세대가 다른 상대가 우리에게 대전을 걸어왔을 때. 받는 쪽 사용자에게도 이유를 알린다.
+    var onIncompatiblePeer: ((_ fromName: String) -> Void)?
+
+    /// 이 인스턴스가 쓰는 세대. 평소에는 손대지 않는다 — 자체검증이 구버전 상대를
+    /// 흉내 내려고 낮춰 잡을 때만 바꾼다.
+    var protocolVersion: Int = battleProtocolVersion
     /// 내 펫의 현재 파워(0...1)를 묻는다. 전투 계산에 실어 보낸다.
     var localPower: (() -> Double)?
 
@@ -185,6 +201,15 @@ final class BattleService {
         guard msg.type == .challenge,
               let fromName = msg.fromName,
               let fromPet = msg.fromPet else { return }
+        // 세대가 다르면 시작하지 않는다. 구버전 상대는 그냥 "거절됨" 으로 보게 되는데,
+        // 어긋난 승패를 양쪽에 띄우는 것보다는 낫다.
+        guard msg.version == protocolVersion else {
+            battleLog("incompatible challenger \(fromName) (version \(msg.version.map(String.init) ?? "none"))")
+            conn.send(BattleMessage(type: .decline, version: protocolVersion))
+            DispatchQueue.main.async { self.onIncompatiblePeer?(fromName) }
+            queue.asyncAfter(deadline: .now() + 0.3) { conn.cancel() }
+            return
+        }
         let challengerPower = msg.power ?? 0
 
         // Ask the UI (main thread) whether to accept; respond back on our queue.
@@ -199,16 +224,17 @@ final class BattleService {
                     }
                     let seed = UInt64.random(in: UInt64.min...UInt64.max)
                     let myPower = self.localPower?() ?? 0
+                    // 결과는 여기서 한 번만 계산하고, 상대는 그것을 그대로 재생한다.
+                    let outcome = simulateBattle(seed: seed,
+                                                 powers: [.challenger: challengerPower,
+                                                          .accepter: myPower])
                     conn.send(BattleMessage(type: .accept,
+                                            version: self.protocolVersion,
                                             fromID: self.instanceID,
                                             fromName: self.displayName,
                                             fromPet: self.petSlug,
                                             seed: seed,
-                                            power: myPower))
-                    // We're the accepter; opponent is the challenger.
-                    let outcome = simulateBattle(seed: seed,
-                                                 powers: [.challenger: challengerPower,
-                                                          .accepter: myPower])
+                                            outcome: outcome))
                     DispatchQueue.main.async {
                         self.onBattleStart?(.accepter, outcome, fromName, fromPet)
                     }
@@ -298,6 +324,7 @@ final class BattleService {
             let myPower = self.localPower?() ?? 0
             conn.onReady = { [weak conn] in
                 conn?.send(BattleMessage(type: .challenge,
+                                         version: self.protocolVersion,
                                          fromID: self.instanceID,
                                          fromName: self.displayName,
                                          fromPet: self.petSlug,
@@ -306,11 +333,13 @@ final class BattleService {
             conn.onMessage = { msg in
                 switch msg.type {
                 case .accept:
-                    guard let seed = msg.seed else { finish(.failed); return }
-                    // We're the challenger; opponent is the accepter.
-                    let outcome = simulateBattle(seed: seed,
-                                                 powers: [.challenger: myPower,
-                                                          .accepter: msg.power ?? 0])
+                    // 결과를 보낼 줄 모르는 구버전이면 시작하지 않는다. 여기서 우리가
+                    // 직접 계산하면 상대는 자기 규칙으로 이미 다른 승자를 띄운 뒤다.
+                    guard msg.version == self.protocolVersion, let outcome = msg.outcome else {
+                        battleLog("incompatible accepter (version \(msg.version.map(String.init) ?? "none"))")
+                        finish(.incompatible)
+                        return
+                    }
                     DispatchQueue.main.async {
                         self.onBattleStart?(.challenger, outcome,
                                             msg.fromName ?? peer.name,
@@ -335,6 +364,8 @@ final class BattleService {
         case accepted
         case declined
         case failed
+        /// 상대 앱의 전투 규칙 세대가 달라 대전을 시작하지 않았다.
+        case incompatible
     }
 }
 
