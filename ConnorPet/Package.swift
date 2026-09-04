@@ -9,7 +9,12 @@ let package = Package(
             name: "ConnorPet",
             resources: [
                 .copy("Resources/pets"),
-                .copy("Resources/effects")
+                .copy("Resources/effects"),
+                // Bundled copy of scripts/claude_hook_status.py so the in-app
+                // "Claude Code 상태 훅 설치" menu action works from a DMG install
+                // (where the repo's scripts/ dir isn't on disk). Must stay
+                // byte-identical to scripts/claude_hook_status.py — see CLAUDE.md.
+                .copy("Resources/hooks")
             ],
             // NotificationCenterDB reads macOS's Notification Center SQLite DB.
             linkerSettings: [
