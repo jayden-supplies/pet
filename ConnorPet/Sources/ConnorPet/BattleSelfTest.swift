@@ -21,6 +21,7 @@ func runBattleSelfTest() -> Never {
     var resultB: (role: BattleRole, outcome: BattleOutcome, oppName: String, oppPet: String)?
     var challenged = false
     var phase1Done = false
+    var peerB: BattlePeer?
 
     func fail(_ why: String) -> Never {
         print("SELFTEST FAIL: \(why)")
@@ -52,9 +53,25 @@ func runBattleSelfTest() -> Never {
         }
 
         phase1Done = true
-        serviceA.stop()
-        serviceB.stop()
-        runVersionSkewPhase(fail: fail)
+
+        // 1.5단계: 노려보기가 실제로 상대에게 닿는지 본다. 예전에는 보내는 쪽
+        // 커넥션이 곧바로 해제돼 아무것도 가지 않았고, 상대 화면은 조용했다.
+        guard let b = peerB else { fail("peerB 를 못 찾았다") }
+        var stareArrived = false
+        serviceB.onStare = { fromName, fromPet in
+            print("[selftest] B 가 노려보기를 받았다: \(fromName)/\(fromPet)")
+            guard fromName == "TesterA" else { fail("노려본 사람 이름이 틀렸다: \(fromName)") }
+            guard fromPet == "totodile" else { fail("노려본 펫이 틀렸다: \(fromPet)") }
+            stareArrived = true
+            serviceA.stop()
+            serviceB.stop()
+            runVersionSkewPhase(fail: fail)
+        }
+        print("[selftest] phase 1.5: A 가 B 를 노려본다…")
+        serviceA.stare(at: b)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+            if !stareArrived { fail("노려보기가 10초 안에 상대에게 닿지 않았다") }
+        }
     }
 
     serviceB.onIncomingChallenge = { fromName, respond in
@@ -79,6 +96,7 @@ func runBattleSelfTest() -> Never {
     serviceA.onPeersChanged = { peers in
         guard !challenged, let b = peers.first(where: { $0.id == serviceB.instanceID }) else { return }
         challenged = true
+        peerB = b
         print("[selftest] A discovered B (\(b.name)) → challenging")
         serviceA.challenge(b) { result in
             print("[selftest] A challenge result: \(result)")

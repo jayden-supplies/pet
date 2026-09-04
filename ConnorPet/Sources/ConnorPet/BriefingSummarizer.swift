@@ -85,12 +85,13 @@ enum BriefingSummarizer {
 
     /// Kicks off a summarise run unless one is already in flight. Returns
     /// immediately; `completion` lands on the main queue when the cache is new.
-    static func refresh(briefs: [SessionBrief], perBriefChars: Int, completion: (() -> Void)? = nil) {
+    static func refresh(briefs: [SessionBrief], perBriefChars: Int, windowHours: Double,
+                        completion: (() -> Void)? = nil) {
         guard !isRefreshing, !briefs.isEmpty else { return }
         guard let claude = claudeExecutable() else { return }
         isRefreshing = true
 
-        let prompt = buildPrompt(briefs: briefs, perBriefChars: perBriefChars)
+        let prompt = buildPrompt(briefs: briefs, perBriefChars: perBriefChars, windowHours: windowHours)
         let mark = fingerprint(briefs)
 
         DispatchQueue.global(qos: .utility).async {
@@ -110,24 +111,33 @@ enum BriefingSummarizer {
         }
     }
 
-    private static func buildPrompt(briefs: [SessionBrief], perBriefChars: Int) -> String {
+    private static func buildPrompt(briefs: [SessionBrief], perBriefChars: Int,
+                                    windowHours: Double) -> String {
+        let window = windowHours >= 1
+            ? "\(Int(windowHours.rounded()))시간"
+            : "\(Int((windowHours * 60).rounded()))분"
         var out = """
-        아래는 여러 작업 세션의 최근 대화 끝부분이다. 각 세션이 **어디까지 진행됐는지**
-        한 줄로 적어라. 무슨 주제인지가 아니라 진행 상태가 필요하다.
+        아래는 작업방 여러 개에서 최근 \(window) 동안 오간 대화다. 방마다
+        **어디까지 진행됐는지** 한 줄로 적어라. 무슨 주제인지가 아니라 진행 상태가 필요하다.
 
-        - 세션 하나당 정확히 한 줄, \(perBriefChars)자 이내 한국어
+        - 방 하나당 정확히 한 줄, \(perBriefChars)자 이내 한국어
         - 형식은 "· [프로젝트명] 진행상태" 이고 다른 말은 절대 붙이지 않는다
-        - 세션 순서를 그대로 유지한다
+        - 방 순서를 그대로 유지한다
         - "무엇을 하는 중" 같은 주제 설명이 아니라, 무엇까지 끝났고 지금 무엇이
-          걸려 있는지를 적는다. 마지막 요청과 마지막 응답이 판단 근거다
+          걸려 있는지를 적는다. 대화 전체가 판단 근거이고, 특히 뒤쪽이 현재 상태다
+        - 여러 갈래를 했으면 마지막에 붙잡고 있던 것을 쓴다
         - 다음에 이어서 하려면 무엇을 봐야 하는지가 드러나면 가장 좋다
 
         """
         for (i, brief) in briefs.enumerated() {
-            out += "\n[세션\(i + 1) 프로젝트=\(brief.project)]\n"
-            let material = brief.recent.isEmpty ? [brief.text] : brief.recent
-            for line in material { out += "요청: \(line)\n" }
-            if let reply = brief.lastReply { out += "마지막 응답: \(reply)\n" }
+            out += "\n[\(i + 1)번 방 프로젝트=\(brief.project)]\n"
+            guard !brief.conversation.isEmpty else {
+                out += "요청: \(brief.text)\n"
+                continue
+            }
+            for turn in brief.conversation {
+                out += turn.isUser ? "나: \(turn.text)\n" : "클로드: \(turn.text)\n"
+            }
         }
         return out
     }

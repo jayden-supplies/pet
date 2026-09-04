@@ -47,7 +47,17 @@ final class PetView: NSView {
     /// Motion pinned from the right-click menu. While set it overrides the
     /// agent state entirely, so any motion can be inspected on demand; picking
     /// "자동" clears it and hands control back to the live status.
+    ///
+    /// 고정은 `pinDuration` 뒤에 스스로 풀린다. 손으로 풀어 줄 때까지 남아 있으면
+    /// 펫이 에이전트 상태와 무관한 자세로 굳어 버리고, 그 사실을 알아채기 어렵다 —
+    /// 작업이 돌아가는지 보려고 띄워 둔 물건인데 상태를 안 보여 주게 된다.
     private var pinnedAnimation: PetAnimationName?
+    private var pinReleaseTimer: Timer?
+
+    /// 손으로 지시한 모션이 유지되는 시간. 자체검증이 1분을 기다리지 않도록
+    /// 환경 변수로 줄일 수 있게 열어 뒀다 — 평소에는 60초다.
+    static let pinDuration: TimeInterval = ProcessInfo.processInfo
+        .environment["CONNORPET_PIN_SECONDS"].flatMap(Double.init) ?? 60
 
     /// 한 바퀴만 돌고 스스로 물러나는 모션(불뿜기). 고정(pin)과 달리 끝나면
     /// 원래 상태로 돌아간다 — 체크포인트 동작이라 계속 뿜고 있으면 곤란하다.
@@ -223,9 +233,12 @@ final class PetView: NSView {
         // 판단해서, 우리가 준 isEnabled 를 덮어쓴다. 그러면 이 펫에 없는 모션도
         // 눌리는 것처럼 보이고 눌러도 아무 일이 없다.
         menu.autoenablesItems = false
-        menu.addItem(withTitle: "모션", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: "모션 (\(Int(Self.pinDuration))초 뒤 자동 복귀)",
+                     action: nil, keyEquivalent: "").isEnabled = false
 
         let auto = NSMenuItem(title: "자동 (에이전트 상태 따르기)", action: #selector(pinMotion(_:)), keyEquivalent: "")
+        // 고정이 영구적이지 않다는 것을 메뉴에서 알 수 있어야 한다.
+        auto.toolTip = "고른 모션은 \(Int(Self.pinDuration))초 뒤 저절로 여기로 돌아옵니다."
         auto.target = self
         auto.representedObject = nil as String?
         auto.state = pinnedAnimation == nil ? .on : .off
@@ -277,7 +290,7 @@ final class PetView: NSView {
     /// 좌클릭과 같은 동작 — 브리핑을 말한다. 좌클릭이 펫을 맞춰야 하는 반면
     /// 이쪽은 메뉴에서 s 로 바로 부를 수 있다.
     @objc private func speakBriefing(_ sender: NSMenuItem) {
-        pinnedAnimation = nil
+        releasePin()
         stopSpeaking()
         if let text = onClick?(), !text.isEmpty {
             speakWaking(text)
@@ -287,20 +300,54 @@ final class PetView: NSView {
     @objc private func useSkill(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let name = PetAnimationName(rawValue: raw) else { return }
-        pinnedAnimation = nil
+        releasePin()
         if playOnce(name) {
             onSkillUsed?()
         }
     }
 
     @objc private func pinMotion(_ sender: NSMenuItem) {
+        let raw = sender.representedObject as? String
+        pin(raw.flatMap(PetAnimationName.init(rawValue:)))
+    }
+
+    /// 모션을 고정한다. `nil` 이면 지금 바로 에이전트 상태로 돌아간다.
+    /// 메뉴가 부르는 통로이자 자체검증이 부르는 통로다.
+    func pin(_ name: PetAnimationName?) {
         stopSpeaking()
-        if let raw = sender.representedObject as? String {
-            pinnedAnimation = PetAnimationName(rawValue: raw)
-        } else {
-            pinnedAnimation = nil
+        guard let name else {
+            releasePin()
+            return
         }
+        pinnedAnimation = name
+        schedulePinRelease()
         applyDisplayAnimation()
+    }
+
+    /// 지금 고정된 모션. 자체검증이 자동 해제를 확인할 때 본다.
+    var pinnedMotion: PetAnimationName? { pinnedAnimation }
+
+    /// 고정을 풀고 에이전트 상태로 되돌린다.
+    private func releasePin() {
+        pinReleaseTimer?.invalidate()
+        pinReleaseTimer = nil
+        guard pinnedAnimation != nil else { return }
+        pinnedAnimation = nil
+        applyDisplayAnimation()
+    }
+
+    /// 새로 지시할 때마다 시계를 처음부터 다시 잰다 — 방금 고른 모션이 앞선
+    /// 지시의 남은 시간에 잘려 나가면 안 된다.
+    private func schedulePinRelease() {
+        pinReleaseTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.pinDuration, repeats: false) { [weak self] _ in
+            self?.releasePin()
+        }
+        // .common 으로 넣는다. 기본 모드로만 걸면 메뉴가 열려 있거나 펫을 끌고 있는
+        // 동안(이벤트 추적 모드) 시계가 멈춘다 — 끌어다 놓는 사이에 시간이 안 가는
+        // 셈이라, 손을 떼기 전까지는 영영 안 풀린다.
+        RunLoop.main.add(timer, forMode: .common)
+        pinReleaseTimer = timer
     }
 
     private func applyDisplayAnimation() {

@@ -20,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let briefFallbackHours: Double = 48
     private let briefFallbackLimit = 3
     private let briefCharsPerSession = 100
+    /// 각 방에서 **얼마 전까지의 대화**를 요약 재료로 삼을지. 세션을 고르는 창과는
+    /// 별개다 — 3시간 안에 만진 방이라도 하루치 대화를 놓고 진행 상태를 판단한다.
+    private let briefConversationHours: Double = 24
     private let briefCharBudget = 500
     private var watcher: AgentStatusWatching?
 
@@ -218,8 +221,10 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
 
         // 첫 클릭이 원문 발췌로 떨어지지 않도록, 뜨자마자 한 번 요약해 둔다.
         // 클릭과 똑같은 선택 로직을 쓴다.
-        BriefingSummarizer.refresh(briefs: currentBriefs().briefs,
-                                   perBriefChars: briefCharsPerSession)
+        let warmup = currentBriefs()
+        BriefingSummarizer.refresh(briefs: warmup.briefs,
+                                   perBriefChars: briefCharsPerSession,
+                                   windowHours: warmup.windowHours)
 
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
             let text = briefingText() ?? "(브리핑 없음)"
@@ -453,61 +458,69 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
 
     /// 지금 말해야 할 브리프 묶음과 앞에 붙일 문장. 클릭과 예열이 **같은** 묶음을
     /// 보게 하려고 뽑아 뒀다 — 다르면 예열이 엉뚱한 걸 요약하고 캐시가 늘 빗나간다.
-    private func currentBriefs() -> (briefs: [SessionBrief], prefix: String?, empty: String?) {
+    private func currentBriefs() -> (briefs: [SessionBrief], prefix: String?, empty: String?, windowHours: Double) {
         // 불뿜기는 "여기까지 정리, 이제부터 할 일만 본다"는 표시다. 최근 3시간
         // 안에 뿜었다면 고정 3시간 창 대신 **그 시점 이후**만 보여 준다.
         if let firedAt = Self.savedFireBreathAt() {
             let sinceFire = Date().timeIntervalSince(firedAt)
             if sinceFire >= 0, sinceFire <= briefPrimaryHours * 3600 {
+                // 체크포인트가 있으면 대화 재료도 그 뒤로 자른다. 하루치를 보면
+                // "여기까지 정리한 뒤로" 라고 해 놓고 그 전 이야기를 하게 된다.
+                let window = sinceFire / 3600
                 let briefs = SessionBriefReader.recent(
-                    withinHours: sinceFire / 3600,
+                    withinHours: window,
                     limit: briefPrimaryLimit,
-                    perBriefChars: briefCharsPerSession
+                    perBriefChars: briefCharsPerSession,
+                    conversationHours: window
                 )
                 // 체크포인트를 찍어 둔 뒤 속성기가 없는 펫으로 바꿔 놓았을 수 있다.
                 // 그 펫이 "불 뿜은 뒤로" 라고 말하면 이상하므로 중립 문구를 쓴다.
                 let since = currentSkillNoun.map { "\($0) 뿜은 뒤로" } ?? "여기까지 정리한 뒤로"
                 return (briefs, "\(since) 이것들만 남았어.",
-                        "\(since) 새로 시작한 작업은 아직 없어. 깨끗해.")
+                        "\(since) 새로 시작한 작업은 아직 없어. 깨끗해.", window)
             }
         }
 
         let primary = SessionBriefReader.recent(
             withinHours: briefPrimaryHours,
             limit: briefPrimaryLimit,
-            perBriefChars: briefCharsPerSession
+            perBriefChars: briefCharsPerSession,
+            conversationHours: briefConversationHours
         )
-        if !primary.isEmpty { return (primary, nil, nil) }
+        if !primary.isEmpty { return (primary, nil, nil, briefConversationHours) }
 
         let fallback = SessionBriefReader.recent(
             withinHours: briefFallbackHours,
             limit: briefFallbackLimit,
-            perBriefChars: briefCharsPerSession
+            perBriefChars: briefCharsPerSession,
+            conversationHours: briefConversationHours
         )
         return (fallback,
                 "최근 \(Int(briefPrimaryHours))시간은 조용했어. 그 전엔 이런 걸 했어.",
-                "최근 \(Int(briefFallbackHours))시간 안에 작업한 게 없어. 푹 쉬었구나?")
+                "최근 \(Int(briefFallbackHours))시간 안에 작업한 게 없어. 푹 쉬었구나?",
+                briefConversationHours)
     }
 
     /// What the pet says when clicked: the most recent sessions and what each
     /// one is doing. Reads Claude Code's own transcripts, so it covers both the
     /// CLI and the desktop app without either being running.
     private func briefingText() -> String? {
-        let (briefs, prefix, empty) = currentBriefs()
+        let (briefs, prefix, empty, windowHours) = currentBriefs()
         guard !briefs.isEmpty else { return empty }
-        return summarizedOrRaw(briefs, prefix: prefix)
+        return summarizedOrRaw(briefs, prefix: prefix, windowHours: windowHours)
     }
 
     /// 요약본이 있으면 그걸 쓰고, 없으면 원문 발췌로 대신하면서 다음 클릭을 위해
     /// 백그라운드 요약을 걸어 둔다. 요약은 10초쯤 걸려서 클릭을 붙잡아 둘 수 없다.
-    private func summarizedOrRaw(_ briefs: [SessionBrief], prefix: String?) -> String {
+    private func summarizedOrRaw(_ briefs: [SessionBrief], prefix: String?, windowHours: Double) -> String {
         let mark = BriefingSummarizer.fingerprint(briefs)
         if let cache = BriefingSummarizer.cached(),
            cache.fingerprint == mark,
            Date().timeIntervalSince(cache.generatedAt) < BriefingSummarizer.cacheTTL {
             return [prefix, cache.text].compactMap { $0 }.joined(separator: "\n\n")
         }
-        BriefingSummarizer.refresh(briefs: briefs, perBriefChars: briefCharsPerSession)
+        BriefingSummarizer.refresh(briefs: briefs, perBriefChars: briefCharsPerSession,
+                                   windowHours: windowHours)
         return render(briefs, prefix: prefix)
     }
 
@@ -876,7 +889,7 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         return sheet
     }
 
-    private static func loadSpriteSheet(slug: String) throws -> SpriteSheet {
+    static func loadSpriteSheet(slug: String) throws -> SpriteSheet {
         guard
             let spritesheetURL = resourceBundle.url(forResource: "spritesheet", withExtension: "png", subdirectory: "pets/\(slug)"),
             let manifestURL = resourceBundle.url(forResource: "pet", withExtension: "json", subdirectory: "pets/\(slug)")

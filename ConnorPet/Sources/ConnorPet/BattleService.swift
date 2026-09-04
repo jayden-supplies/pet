@@ -106,6 +106,9 @@ final class BattleService {
     private var outgoing: [String: BattleConnection] = [:]
     /// Inbound connections we've accepted, held until their handshake resolves.
     private var incoming: Set<BattleConnection> = []
+    /// 보내는 중인 노려보기. challenge 와 달리 응답을 기다리지 않아 붙잡아 둘 곳이
+    /// 없는데, 지역 변수로만 두면 .ready 가 오기도 전에 해제돼 아무것도 못 보낸다.
+    private var stares: Set<BattleConnection> = []
 
     init(displayName: String? = nil, petSlug: String) {
         self.displayName = displayName ?? (Host.current().localizedName ?? "someone")
@@ -287,14 +290,27 @@ final class BattleService {
         queue.async {
             let nwConn = NWConnection(to: peer.endpoint, using: .tcp)
             let conn = BattleConnection(connection: nwConn, queue: self.queue)
+            // 연결이 살아 있는 동안 붙잡아 둔다. challenge 는 outgoing 에 넣어 두는데
+            // 노려보기는 그런 곳이 없어서, 예전에는 이 함수가 끝나는 즉시 conn 이
+            // 해제돼 .ready 가 오지 않았다 — 상대 화면에 아무것도 뜨지 않던 이유다.
+            self.stares.insert(conn)
+            let done: () -> Void = { [weak conn] in
+                guard let conn else { return }
+                conn.cancel()
+                self.stares.remove(conn)
+            }
             conn.onReady = { [weak conn] in
                 conn?.send(BattleMessage(type: .stare,
+                                         version: self.protocolVersion,
                                          fromID: self.instanceID,
                                          fromName: self.displayName,
                                          fromPet: self.petSlug))
                 // 보낸 뒤 플러시될 시간만 주고 닫는다.
-                self.queue.asyncAfter(deadline: .now() + 0.5) { conn?.cancel() }
+                self.queue.asyncAfter(deadline: .now() + 0.5, execute: done)
             }
+            // 상대가 꺼져 있거나 주소가 낡았으면 .ready 가 영영 안 온다. 그때도 치운다.
+            conn.onClose = done
+            self.queue.asyncAfter(deadline: .now() + 5.0, execute: done)
             conn.start()
         }
     }
