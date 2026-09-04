@@ -9,7 +9,8 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
   - `Sources/ConnorPet/ClaudeCodeStatusWatcher.swift` — `~/.claude/sessions/*.json`(항상) + `~/.claude/connor-pet-status.json`(훅 설치 시)을 250ms마다 폴링해 병합 (Claude Code 소스, 기본값)
   - `Sources/ConnorPet/ClaudeDesktopStatusWatcher.swift` — Claude 데스크톱 앱 소스. 렌더러 CPU(신호1)+알림센터 DB(신호2)를 500ms 폴링해 잠듦/달리기/얼음/헤롱헤롱 판정. AX가 Claude 웹 콘텐츠를 안 뿜어서 CPU 휴리스틱을 씀
   - `Sources/ConnorPet/ClaudeProcessActivity.swift` — Claude 프로세스 트리 CPU 샘플러(`proc_pid_rusage`, mach 틱→ns timebase 변환). "생성 중=달리기" 신호
-  - `Sources/ConnorPet/NotificationCenterDB.swift` — macOS 알림센터 SQLite DB 읽기(Full Disk Access 필요). Claude 완료 알림="헤롱헤롱" 신호
+  - `Sources/ConnorPet/NotificationCenterDB.swift` — macOS 알림센터 SQLite DB 읽기(Full Disk Access 필요). Claude 완료 알림="헤롱헤롱" 신호. `isReadable`이 사실상 "FDA 권한 있음" 프록시(baseline은 이 readable 여부로만 잡는다 — 비어 있어도 첫 실제 알림이 헤롱헤롱을 띄우도록)
+  - `Sources/ConnorPet/FullDiskAccess.swift` — FDA 권한 감지(`isGranted()`=알림센터 DB 읽기 가능 여부) + `시스템 설정 › 전체 디스크 접근` 창 열기(`openSettings()`). 앱이 직접 부여할 수 없어(재실행 필요) 안내만 함. AppDelegate 메뉴의 "전체 디스크 접근 권한 (헤롱헤롱 알림)" 항목이 이걸 호출(권한 여부=체크 표시)
   - `Sources/ConnorPet/PetAnimationState.swift` — 우선순위 로직 포팅 + `AgentStatusWatching` 프로토콜 (`acknowledgeDone()`으로 헤롱헤롱 호버-해제) + 토큰/진화 필드
   - `Sources/ConnorPet/TokenUsage.swift` — 트랜스크립트 JSONL에서 실제 토큰 사용량 합산(`TranscriptTokenReader`, mtime 캐시) + 토큰→경험치%/진화단계 매핑(`XPModel`)
   - `Sources/ConnorPet/SpriteSheet.swift`, `PetView.swift`(펫 아래 경험치 바 포함), `PetWindow.swift` — 렌더링
@@ -18,7 +19,7 @@ Orca 또는 Claude Code의 프로젝트/에이전트 상태에 반응하는 데�
   - `Sources/ConnorPet/BattleWindow.swift` — 작은 LCD형 대전 화면(디지몬 다마고치 스타일, 가운데 뜨는 `.nonactivatingPanel`). **한 번에 펫 하나만** 표시(내 펫=왼쪽 끝·오른쪽으로 발사, 상대=오른쪽 끝·왼쪽으로 발사), 발사체가 화면 밖으로 나가면 플래시 컷으로 **화면 전환**해 상대 펫 등장. 불꽃은 `CAEmitterLayer`(additive), 회피는 뒤집기+백홉 + HP + WIN/LOSE
   - `Sources/ConnorPet/BattleChallengeDialog.swift` — 대전 신청 수락/거절 모달(`BattleDialog`). accessory 앱이라 `NSAlert`이 폴더/앱 아이콘을 띄우는 문제를 피하려고, 커스텀 borderless `NSPanel`(canBecomeKey override)에 **"BATTLE" 배너**(코드로 그린 그라디언트) + 초록 수락 버튼(layer-backed `PillButton`, `bezelColor`은 불안정해서 안 씀)로 직접 그림. `runModal`로 동기 반환
   - `Sources/ConnorPet/BattleSelfTest.swift` — `CONNORPET_SELFTEST=battle swift run`으로 도는 헤드리스 핸드셰이크 검증(한 프로세스에서 A/B 발견→신청→수락→결과 합의까지 확인, `SELFTEST PASS`)
-  - `Sources/ConnorPet/AppDelegate.swift` — 앱 연결, 메뉴바 아이콘/펫 선택/소스 선택/경험치 바 토글/진화 사용 토글/**Claude Code 상태 훅 설치 토글**/대전 메뉴 + 경험치%에 따른 진화 스프라이트 교체(`evolutionChains`, 임계치·on-off는 사용자 설정)
+  - `Sources/ConnorPet/AppDelegate.swift` — 앱 연결, 메뉴바 아이콘/펫 선택/소스 선택/경험치 바 토글/진화 사용 토글/**Claude Code 상태 훅 설치 토글**/**전체 디스크 접근 권한 열기**/대전 메뉴 + 경험치%에 따른 진화 스프라이트 교체(`evolutionChains`, 임계치·on-off는 사용자 설정)
   - `Sources/ConnorPet/ClaudeHookInstaller.swift` — `scripts/install_claude_hooks.py`를 Swift로 포팅한 인앱 설치기. DMG로 설치해 저장소가 없는 사용자를 위해, 번들에 넣어 둔 훅 핸들러(`Resources/hooks/claude_hook_status.py`)를 `~/.claude/connor-pet/`로 복사한 뒤 `~/.claude/settings.json`에 같은 6개 훅을 병합/제거(`JSONSerialization`으로 느슨하게 읽어 기존 설정·다른 훅은 보존, 쓰기 전 타임스탬프 백업). AppDelegate 메뉴의 "Claude Code 상태 훅 (얼음/헤롱헤롱)" 항목이 이걸 호출(설치 여부=체크 표시)
   - `Sources/ConnorPet/HookInstallSelfTest.swift` — `CONNORPET_SELFTEST=hooks swift run`으로 도는 헤드리스 설치기 검증(임시 홈에 실제 `settings.json`을 시드해 설치→재설치 무동작→제거까지, 남의 훅이 보존되는지 확인, `SELFTEST PASS`)
   - `Sources/ConnorPet/Resources/pets/<slug>/` — 펫별 `spritesheet.png` + `pet.json` 번들 사본
