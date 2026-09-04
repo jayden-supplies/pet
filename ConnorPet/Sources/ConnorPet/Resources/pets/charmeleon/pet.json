@@ -4,8 +4,8 @@
   "description": "Custom connor-pet build (evolved form): 리자드 (Charmeleon) reacts to live Orca/Claude Code agent status, skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, nothing=Sleep, working=running. Built from PokeAPI gen5 battle sprites.",
   "spritesheetPath": "spritesheet.png",
   "frame": {
-    "width": 480,
-    "height": 480
+    "width": 360,
+    "height": 360
   },
   "fps": 6,
   "defaultAnimation": "idle",
@@ -184,53 +184,53 @@
     "effect": "fire_jet.png",
     "mouthByFrame": [
       {
-        "x": 93,
-        "y": 147,
+        "x": 58,
+        "y": 102,
         "grow": 0.0
       },
       {
-        "x": 99,
-        "y": 147,
+        "x": 60,
+        "y": 102,
         "grow": 0.0
       },
       {
-        "x": 106,
-        "y": 147,
+        "x": 62,
+        "y": 102,
         "grow": 0.0
       },
       {
-        "x": 114,
-        "y": 147,
+        "x": 64,
+        "y": 102,
         "grow": 0.45
       },
       {
-        "x": 118,
-        "y": 147,
+        "x": 65,
+        "y": 102,
         "grow": 0.588
       },
       {
-        "x": 122,
-        "y": 147,
+        "x": 67,
+        "y": 102,
         "grow": 0.725
       },
       {
-        "x": 127,
-        "y": 147,
+        "x": 68,
+        "y": 102,
         "grow": 0.863
       },
       {
-        "x": 131,
-        "y": 147,
+        "x": 69,
+        "y": 102,
         "grow": 1.0
       },
       {
-        "x": 104,
-        "y": 147,
+        "x": 61,
+        "y": 102,
         "grow": 0.0
       },
       {
-        "x": 93,
-        "y": 147,
+        "x": 58,
+        "y": 102,
         "grow": 0.0
       }
     ]

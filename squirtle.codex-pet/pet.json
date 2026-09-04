@@ -4,8 +4,8 @@
   "description": "Custom connor-pet build: Squirtle / 꼬부기 reacts to live Orca agent/project status, skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites.",
   "spritesheetPath": "spritesheet.png",
   "frame": {
-    "width": 400,
-    "height": 400
+    "width": 200,
+    "height": 200
   },
   "fps": 6,
   "defaultAnimation": "idle",
@@ -184,53 +184,53 @@
     "effect": "water_jet.png",
     "mouthByFrame": [
       {
-        "x": 100,
-        "y": 150,
+        "x": 62,
+        "y": 79,
         "grow": 0.0
       },
       {
-        "x": 107,
-        "y": 150,
+        "x": 68,
+        "y": 79,
         "grow": 0.0
       },
       {
-        "x": 113,
-        "y": 150,
+        "x": 74,
+        "y": 79,
         "grow": 0.0
       },
       {
-        "x": 122,
-        "y": 150,
+        "x": 82,
+        "y": 79,
         "grow": 0.45
       },
       {
-        "x": 127,
-        "y": 150,
+        "x": 87,
+        "y": 79,
         "grow": 0.588
       },
       {
-        "x": 131,
-        "y": 150,
+        "x": 91,
+        "y": 79,
         "grow": 0.725
       },
       {
-        "x": 136,
-        "y": 150,
+        "x": 95,
+        "y": 79,
         "grow": 0.863
       },
       {
-        "x": 140,
-        "y": 150,
+        "x": 99,
+        "y": 79,
         "grow": 1.0
       },
       {
-        "x": 112,
-        "y": 150,
+        "x": 73,
+        "y": 79,
         "grow": 0.0
       },
       {
-        "x": 100,
-        "y": 150,
+        "x": 62,
+        "y": 79,
         "grow": 0.0
       }
     ]

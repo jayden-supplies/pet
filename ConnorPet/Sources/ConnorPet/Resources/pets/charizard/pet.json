@@ -4,8 +4,8 @@
   "description": "Custom connor-pet build (evolved form): 리자몽 (Charizard) reacts to live Orca/Claude Code agent status, skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, nothing=Sleep, working=running. Built from PokeAPI gen5 battle sprites.",
   "spritesheetPath": "spritesheet.png",
   "frame": {
-    "width": 480,
-    "height": 480
+    "width": 400,
+    "height": 400
   },
   "fps": 6,
   "defaultAnimation": "idle",
@@ -184,53 +184,53 @@
     "effect": "fire_jet.png",
     "mouthByFrame": [
       {
-        "x": 122,
-        "y": 259,
+        "x": 82,
+        "y": 219,
         "grow": 0.0
       },
       {
-        "x": 132,
-        "y": 259,
+        "x": 86,
+        "y": 219,
         "grow": 0.0
       },
       {
-        "x": 143,
-        "y": 259,
+        "x": 89,
+        "y": 219,
         "grow": 0.0
       },
       {
-        "x": 156,
-        "y": 259,
+        "x": 94,
+        "y": 219,
         "grow": 0.45
       },
       {
-        "x": 163,
-        "y": 259,
+        "x": 97,
+        "y": 219,
         "grow": 0.588
       },
       {
-        "x": 170,
-        "y": 259,
+        "x": 99,
+        "y": 219,
         "grow": 0.725
       },
       {
-        "x": 177,
-        "y": 259,
+        "x": 102,
+        "y": 219,
         "grow": 0.863
       },
       {
-        "x": 184,
-        "y": 259,
+        "x": 104,
+        "y": 219,
         "grow": 1.0
       },
       {
-        "x": 141,
-        "y": 259,
+        "x": 89,
+        "y": 219,
         "grow": 0.0
       },
       {
-        "x": 122,
-        "y": 259,
+        "x": 82,
+        "y": 219,
         "grow": 0.0
       }
     ]
