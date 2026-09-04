@@ -100,27 +100,24 @@ final class TranscriptTokenReader {
 /// pet should visibly evolve within a single real working session rather than
 /// after hours of use.
 enum XPModel {
-    /// Tokens that fill the bar to 100%. Sized so a real working session spans
-    /// a visible range of the bar rather than pinning it at full (observed live:
-    /// heavy multi-session totals land around ~800k), while still being
-    /// reachable.
-    static let maxTokens: Double = 1_000_000
+    /// 진화 지점 — **비율이 아니라 실제 토큰 수**다.
+    ///
+    /// 예전에는 "바 만렙 100만 토큰의 10%/30%" 였는데, 실측 하루 사용량이
+    /// (입력+출력+캐시생성 기준) 1,500만이라 앱을 켜자마자 바가 가득 차고
+    /// 1차 진화를 건너뛰어 곧장 2차로 갔다. 1차 진화형을 볼 수가 없었다.
+    static let stageTokens: [Double] = [200_000_000, 500_000_000]
 
-    /// Fraction cutoffs at which the pet advances to evolution stage 1, then 2.
-    /// Intentionally early (PoC): stage 1 at 10% (~100k tokens), stage 2 at 30%
-    /// (~300k) — the pet visibly evolves within normal use instead of needing a
-    /// full bar.
-    static let stageThresholds: [Double] = [0.10, 0.30]
+    /// 바가 가득 차는 기준. 마지막 진화 지점과 같게 두어, 바가 꽉 차는 순간이
+    /// 최종 진화 시점이 되게 한다.
+    static var maxTokens: Double { stageTokens.last ?? 1 }
 
     static func percent(tokens: Double) -> Double {
         guard maxTokens > 0 else { return 0 }
         return min(1, max(0, tokens / maxTokens))
     }
 
-    /// 0 = base form, 1 = first evolution, 2 = second evolution. Thresholds are
-    /// configurable from the menu bar (see AppDelegate.evolutionThresholds);
-    /// `stageThresholds` is only the default when the user hasn't changed them.
-    static func stage(percent: Double, thresholds: [Double] = stageThresholds) -> Int {
-        thresholds.reduce(0) { $0 + (percent >= $1 ? 1 : 0) }
+    /// 0 = 기본형, 1 = 1차 진화, 2 = 2차 진화.
+    static func stage(tokens: Double) -> Int {
+        stageTokens.reduce(0) { $0 + (tokens >= $1 ? 1 : 0) }
     }
 }
