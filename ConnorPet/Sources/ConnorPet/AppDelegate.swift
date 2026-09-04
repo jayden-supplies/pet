@@ -211,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BriefingSummarizer.refresh(briefs: currentBriefs().briefs,
                                    perBriefChars: briefCharsPerSession)
 
+        }
         if ProcessInfo.processInfo.environment["CONNORPET_DEBUG"] != nil {
             let text = briefingText() ?? "(브리핑 없음)"
             FileHandle.standardError.write("[connor-pet] 클릭 브리핑 미리보기 (\(text.count)자):\n\(text)\n".data(using: .utf8)!)
@@ -505,6 +506,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         evoToggle.state = evolutionEnabled ? .on : .off
         menu.addItem(evoToggle)
 
+        // 되돌릴 수 없으므로 확인을 받는다.
+        let resetItem = NSMenuItem(title: "모든 경험치 초기화", action: #selector(resetAllXP), keyEquivalent: "")
+        resetItem.target = self
+        menu.addItem(resetItem)
+
         menu.addItem(.separator())
         menu.addItem(makeBattleMenuItem())
 
@@ -523,6 +529,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Menu-bar evolution controls
+
+    /// 모든 펫의 누적 경험치를 지운다. 진화 단계는 경험치에서 계산되므로 같이
+    /// 초기화되고, 진화형을 보고 있었다면 기본형으로 되돌아간다.
+    @objc private func resetAllXP() {
+        let pets = petTokens.filter { $0.value > 0 }.count
+        guard BattleDialog.confirm(
+            title: "모든 경험치 초기화",
+            message: pets > 0
+                ? "펫 \(pets)마리의 누적 경험치가\n모두 사라지고 진화도 풀립니다.\n되돌릴 수 없습니다."
+                : "초기화할 경험치가 없습니다.\n그래도 진행할까요?",
+            confirmTitle: "모든 경험치 초기화"
+        ) else { return }
+
+        performResetAllXP()
+    }
+
+    /// 확인 절차와 분리해 둔 초기화 본체.
+    private func performResetAllXP() {
+        petTokens = [:]
+        tokenSaveTimer?.invalidate(); tokenSaveTimer = nil
+        savePetTokens()
+        currentPercent = 0
+        applyStage()   // 단계가 0으로 떨어지고 refreshDisplayedPet 이 기본형으로 되돌린다
+        rebuildMenu()
+    }
 
     @objc private func toggleEvolutionEnabled() {
         evolutionEnabled.toggle()

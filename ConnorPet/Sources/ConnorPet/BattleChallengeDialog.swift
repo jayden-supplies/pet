@@ -19,6 +19,18 @@ enum BattleDialog {
         return controller.runModal() == 1
     }
 
+    /// 되돌릴 수 없는 동작을 확인받는다. 기본 버튼이 취소라, 실수로 Return 을
+    /// 눌러도 진행되지 않는다.
+    static func confirm(title: String, message: String, confirmTitle: String) -> Bool {
+        let controller = DialogController(
+            showsBanner: false,
+            title: title,
+            message: message,
+            buttons: [.init(title: confirmTitle, kind: .secondary), .init(title: "취소", kind: .primary)]
+        )
+        return controller.runModal() == 0
+    }
+
     /// One-button info popup (e.g. declined / failed), same look, no banner.
     static func info(title: String, message: String) {
         let controller = DialogController(
