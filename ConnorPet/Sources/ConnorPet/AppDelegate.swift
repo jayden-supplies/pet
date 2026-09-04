@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // (see scripts/build_sheet.py's PETS list, which is the source of truth for
     // this set). Display names shown in the menu come from each pet's own
     // manifest rather than being duplicated here.
-    private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic", "togepi", "tepig", "snorlax"]
+    private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic", "togepi", "tepig", "snorlax", "gengar"]
     private var petDisplayNames: [String: String] = [:]
     private var selectedPetSlug = availablePetSlugs[0]
 
@@ -81,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "ditto": [],
         "togepi": [],
         "snorlax": [],
+        "gengar": [],
     ]
 
     // Whether the pet evolves at all (menu toggle). When off it stays the base
