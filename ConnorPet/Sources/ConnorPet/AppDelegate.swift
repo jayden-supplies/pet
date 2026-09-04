@@ -649,13 +649,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyStage()
     }
 
+    /// 호버할 때 바 위에 뜨는 문구. "EXP 100,000 / 200,000,000 - 0.05%" 꼴이다.
+    /// 분모는 **다음 진화 지점**이라, 진화할 때마다 기준이 올라간다.
+    private static func xpDetail(tokens: Double) -> String {
+        let p = XPModel.progress(tokens: tokens)
+        let n = NumberFormatter()
+        n.numberStyle = .decimal
+        let now = n.string(from: NSNumber(value: Int(tokens))) ?? "0"
+        guard let target = p.target else { return "EXP \(now) - MAX" }
+        let goal = n.string(from: NSNumber(value: Int(target))) ?? "0"
+        let pct = p.percent * 100
+        // 초반에는 소수점 둘째 자리까지 보여야 움직이는 게 보인다.
+        let shown = pct >= 10 ? String(format: "%.1f", pct) : String(format: "%.2f", pct)
+        return "EXP \(now) / \(goal) - \(shown)%"
+    }
+
     /// Applies the current XP to the bar and evolution. When evolution is
     /// disabled the pet is pinned to its base form (stage 0) no matter how much
     /// XP it has. Called both on each poll and immediately after a menu change
     /// (thresholds / enable toggle) so edits take effect without waiting.
     private func applyStage() {
-        let stage = evolutionEnabled ? XPModel.stage(tokens: petTokens[selectedPetSlug] ?? 0) : 0
-        petView?.setProgress(percent: currentPercent, stage: stage)
+        let tokens = petTokens[selectedPetSlug] ?? 0
+        let stage = evolutionEnabled ? XPModel.stage(tokens: tokens) : 0
+        petView?.setProgress(percent: currentPercent, stage: stage,
+                             detail: Self.xpDetail(tokens: tokens))
         if stage != currentStage {
             currentStage = stage
             refreshDisplayedPet()
