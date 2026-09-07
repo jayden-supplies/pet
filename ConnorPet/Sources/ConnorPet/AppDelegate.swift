@@ -301,6 +301,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
+        // 설정 창이 실제로 **눈에 보이게** 뜨는지 확인한다: CONNORPET_SETTINGS_CHECK=1.
+        //
+        // 창을 만드는 것만으로는 부족하다. 이 앱은 .accessory 라 메뉴 막대 항목을
+        // 눌러도 앱이 활성화되지 않을 때가 있고, 그러면 창이 다른 앱 뒤에 깔려
+        // "안 뜬" 것처럼 보인다. 실측에서 같은 코드가 실행마다 갈렸다 — 세 번 중
+        // 두 번은 포커스를 받고 한 번은 못 받았다. 간헐적이라 눈으로는 못 잡는다.
+        //
+        // 그래서 다른 앱을 앞으로 보내 실제 조건을 만든 뒤, 메뉴 항목의 동작을
+        // 그대로 보내고(사용자가 누르는 것이 그것이다) 결과를 본다. 판정 기준은
+        // 포커스가 아니라 **보이느냐**다 — 포커스를 못 받아도 떠 있는 층에 있으면
+        // 눈에는 보인다.
+        //
+        // 자체검증 진입점(main.swift)이 아니라 여기 있는 이유: 설정 창은 진짜
+        // AppDelegate 를 위임자로 요구하는데, 그것을 흉내 내면 정작 확인하려는
+        // 실제 경로가 아니게 된다.
+        if ProcessInfo.processInfo.environment["CONNORPET_SETTINGS_CHECK"] != nil {
+            NSWorkspace.shared.runningApplications
+                .first { $0.bundleIdentifier == "com.apple.finder" }?
+                .activate()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                print("[selftest] 열기 직전 우리 앱이 앞에 있었나: \(NSApp.isActive)")
+                guard let menu = self?.statusItem?.menu else {
+                    print("SELFTEST FAIL: 메뉴바 메뉴가 없다")
+                    exit(1)
+                }
+                self?.menuNeedsUpdate(menu)
+                guard let item = menu.items.first(where: { $0.title == "설정…" }),
+                      let action = item.action, item.isEnabled else {
+                    print("SELFTEST FAIL: 메뉴바에 쓸 수 있는 \"설정…\" 항목이 없다")
+                    exit(1)
+                }
+                guard NSApp.sendAction(action, to: item.target, from: item) else {
+                    print("SELFTEST FAIL: \"설정…\" 동작을 받아 줄 대상이 없다")
+                    exit(1)
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    guard let win = NSApp.windows.first(where: { $0.title == "ConnorPet 설정" }) else {
+                        print("SELFTEST FAIL: 설정 창이 만들어지지 않았다")
+                        exit(1)
+                    }
+                    let key = win.isKeyWindow
+                    let floating = win.level.rawValue >= NSWindow.Level.floating.rawValue
+                    print("[selftest] 보임=\(win.isVisible) 포커스=\(key) 층=\(win.level.rawValue)")
+                    guard win.isVisible, key || floating else {
+                        print("SELFTEST FAIL: 포커스도 없고 보통 층이다 — 다른 앱 뒤에 깔린다")
+                        exit(1)
+                    }
+                    print("SELFTEST PASS")
+                    exit(0)
+                }
+            }
+        }
+
         // 첫 클릭이 원문 발췌로 떨어지지 않도록, 뜨자마자 한 번 요약해 둔다.
         // 클릭과 똑같은 선택 로직을 쓴다.
         let warmup = currentBriefs()

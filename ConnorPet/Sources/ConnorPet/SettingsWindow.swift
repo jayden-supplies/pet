@@ -85,9 +85,34 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func show() {
         if window == nil { buildWindow() }
         rebuildContent()
+        guard let window else { return }
+
+        // 위치를 먼저 잡는다. 앞으로 내보낸 뒤 옮기면 한 프레임 다른 자리에 보인다.
+        window.center()
         NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
-        window?.center()
+        window.makeKeyAndOrderFront(nil)
+
+        // 여기까지만 하면 창이 **다른 앱 뒤에 깔린다**. 이 앱은 .accessory 라
+        // 메뉴 막대 항목을 눌러도 앱이 활성화되지 않고, 최신 macOS 는 활성화되지
+        // 않은 앱의 activate 요청을 무시한다. 실측으로 key=false / appActive=false /
+        // orderedIndex=2 였다 — 창은 떠 있는데 사용자 눈에는 "안 뜬" 것이다.
+        //
+        // orderFrontRegardless 는 활성화 여부와 무관하게 앞으로 내보낸다.
+        window.orderFrontRegardless()
+
+        // 그리고 떠 있는 층에 올린다. 앞으로 내보내는 것만으로는 다른 앱을 한 번
+        // 클릭하는 순간 다시 뒤로 숨고, 이 앱은 활성화가 막혀 있어 되살릴 방법이
+        // 없다. 활성화 여부로 갈라 보려 했으나 실측에서 열린 직후 활성 상태가
+        // 뒤집혀(열 때 true → 1초 뒤 false) 조건이 소용없었다.
+        //
+        // 포커스를 받으면(windowDidBecomeKey) 곧바로 보통 층으로 내린다. 그래서
+        // 설정 창이 계속 위에 떠 있는 성가신 창이 되지는 않는다.
+        window.level = .floating
+        window.makeKey()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        window?.level = .normal
     }
 
     /// 창이 떠 있는 동안 상태(대전 상대 목록, 훅 설치 여부 등)가 바뀌면 다시 그린다.
