@@ -284,6 +284,18 @@ PETS = [
             "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
         ),
     },
+    {
+        "slug": "diglett",
+        "dex_id": 50,
+        "out_dir_name": "diglett.codex-pet",
+        "id": "diglett-diguda",
+        "display_name": "디그다 (Diglett)",
+        "description": (
+            "Custom connor-pet build: Diglett / 디그다 reacts to live Orca agent/project status, "
+            "skinned as Pokémon status conditions — blocked/waiting=Freeze, done=Infatuation, "
+            "nothing=Sleep, working=running (unchanged). Built from PokeAPI gen5 battle sprites."
+        ),
+    },
 ]
 
 
@@ -307,6 +319,7 @@ _EVOLUTIONS = [
     ("combusken", 256, "영뿔 (Combusken)"),
     ("blaziken", 257, "번치코 (Blaziken)"),
     ("vaporeon", 134, "샤미드 (Vaporeon)"),
+    ("dugtrio", 51, "닥트리오 (Dugtrio)"),
 ]
 for _slug, _dex, _name in _EVOLUTIONS:
     PETS.append({
