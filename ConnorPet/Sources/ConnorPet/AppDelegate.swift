@@ -1,9 +1,23 @@
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var window: PetWindow?
     private var petView: PetView?
     private var statusItem: NSStatusItem?
+    // 상태바 메뉴는 **한 번만** 만들어 재사용한다. 예전에는 상태가 바뀔 때마다
+    // 새 NSMenu 를 만들어 `statusItem.menu` 에 통째로 갈아 끼웠는데, 메뉴가 열려
+    // 추적 중인 순간(메뉴 항목 클릭 처리 도중이나 대전 피어 갱신이 비동기로 끼어들
+    // 때)에 갈아 끼우면 AppKit 이 아직 쓰고 있던 옛 메뉴가 해제돼 objc_msgSend 가
+    // 죽은 객체를 건드려 크래시 났다("진화 사용" 클릭 시 앱 종료 버그). 이제는 이
+    // 인스턴스를 계속 두고, 델리게이트의 menuNeedsUpdate(열리기 직전, 추적 전에
+    // 불림)에서만 항목을 다시 채운다.
+    private let statusMenu = NSMenu()
+    // In-app updater (Sparkle). Only created for packaged builds that carry a
+    // SUFeedURL — see UpdaterManager.isConfigured. `updateAvailable`/`updateVersion`
+    // are driven by the silent launch check and reflected in the menu.
+    private var updater: UpdaterManager?
+    private var updateAvailable = false
+    private var updateVersion: String?
     private var bubble: SpeechBubbleWindow?
     private var flame: FlameWindow?
     private var xpDetailWindow: XPDetailWindow?
@@ -34,6 +48,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var battleWindow: BattleWindow?
     private var pendingChallengeAlert = false
 
+    // 대전이 업무를 방해하지 않게, 신청 흐름을 두 단계로 나눈다.
+    //   신청한 쪽 — 펫 위에 20초 카운트다운 막대(challengeCountdown)를 띄우고,
+    //     그 안에 응답이 없으면 "응답하지 않음" 모달을 띄운다.
+    //   신청받은 쪽 — 처음엔 가운데 모달이 아니라 펫 오른쪽 위에 작은 "Challenge"
+    //     말풍선(challengeBubble)만 10초 띄우고, 눌러야 예전 수락/거절 모달이 뜬다.
+    private var challengeBubble: ChallengeBubbleWindow?
+    private var challengeCountdown: ChallengeCountdownWindow?
+    private var pendingChallengeBubble = false
+    private let challengeWaitSeconds: TimeInterval = 20   // 신청자 카운트다운(막대)
+    private let challengeBubbleSeconds: TimeInterval = 10 // 신청받은 쪽 말풍선 노출
+    private let challengeModalSeconds: TimeInterval = 10  // 말풍선을 누른 뒤 뜨는 수락/거절 모달
+
+    // 펫 우클릭 › "설정…"으로 여는 창. 메뉴바 아이템에 흩어져 있던 기능을 한 곳에
+    // 모아, 메뉴바가 가려 접근 못 하는 사용자도 쓸 수 있게 하는 두 번째 진입점.
+    private var settingsController: SettingsWindowController?
+
     // Orca's own default (PET_SIZE_DEFAULT=180) still read as "big" next to the
     // small nav-badge-style pet icon the user is comparing against — sized
     // near Orca's PET_SIZE_MIN=60 floor instead.
@@ -53,20 +83,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // (see scripts/build_sheet.py's PETS list, which is the source of truth for
     // this set). Display names shown in the menu come from each pet's own
     // manifest rather than being duplicated here.
-    private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic", "togepi", "tepig", "snorlax", "gengar"]
+    private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic", "togepi", "tepig", "snorlax", "gengar", "diglett"]
     private var petDisplayNames: [String: String] = [:]
     private var selectedPetSlug = availablePetSlugs[0]
 
-    // Which live status source drives the pet's animation. "claude-code" polls
-    // ~/.claude/sessions/*.json every 250ms; "orca" polls Orca's last-status.json
-    // every 1s; "claude-desktop" watches the Claude desktop app via renderer CPU
-    // + the Notification Center DB (see ClaudeCodeStatusWatcher/OrcaStatusWatcher/
-    // ClaudeDesktopStatusWatcher).
-    private static let availableStatusSources = ["claude-code", "orca", "claude-desktop"]
+    // Which live status source drives the pet's animation. "claude-desktop" reads
+    // the Claude desktop app's Accessibility tree (+ Notification Center DB) via
+    // ClaudeDesktopStatusWatcher; "claude-code" polls ~/.claude/sessions/*.json
+    // every 250ms; "orca" polls Orca's last-status.json every 1s. This order is
+    // used *everywhere* — menu-bar picker, settings, and the first-run wizard:
+    // Claude Desktop, then Claude Code, then Orca. [0] is also the default source.
+    private static let availableStatusSources = ["claude-desktop", "claude-code", "orca"]
     private static let statusSourceDisplayNames = [
         "claude-code": "Claude Code",
-        "orca": "Orca",
         "claude-desktop": "Claude Desktop",
+        "orca": "Orca",
     ]
     private var selectedStatusSource = availableStatusSources[0]
 
@@ -83,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "chikorita": ["bayleef", "meganium"],
         "torchic": ["combusken", "blaziken"],
         "eevee": ["vaporeon"],
+        "diglett": ["dugtrio"],
         "ditto": [],
         "togepi": [],
         "snorlax": [],
@@ -129,6 +161,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            petDisplayNames.keys.contains(forced) {
             selectedPetSlug = forced
         }
+
+        // Which source drives the pet — read now (before the first-run wizard) so
+        // that dismissing the wizard keeps this saved/default value.
+        selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
+
+        // 첫 실행(설치 후 최초 1회, 재실행은 X)에만 뜨는 마법사: ①펫 고르기(이미지)
+        // → ②사용하는 앱 고르기. 고른 값을 selectedPetSlug/selectedStatusSource 에
+        // 반영·저장하고, 이후엔 저장된 값을 그대로 복원한다.
+        maybeRunFirstRunWizard()
 
         guard let sheet = try? Self.loadSpriteSheet(slug: selectedPetSlug) else {
             fatalError("connor-pet: bundled pet '\(selectedPetSlug)' not found")
@@ -202,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.onHoverEnter = { [weak self] in
             self?.watcher?.acknowledgeDone()
         }
+        view.onOpenSettings = { [weak self] in self?.openSettingsWindow() }
         view.onHoverChanged = { [weak self] on in
             self?.xpHovering = on
             self?.updateXPDetailWindow()
@@ -213,15 +255,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         petView = view
         bubble = SpeechBubbleWindow()
         xpDetailWindow = XPDetailWindow()
+        challengeBubble = ChallengeBubbleWindow()
+        challengeCountdown = ChallengeCountdownWindow()
         loadSkillEffect(for: sheet)
 
         setUpStatusItem()
+        setUpUpdater()
 
-selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSources[0])
+        // selectedStatusSource was resolved (and possibly set by the first-run
+        // wizard) before the window was built — just start its watcher.
         startWatcher(for: selectedStatusSource)
 
         startBattleService()
         startQuestService()
+
+        // 디버그 전용: 설정창 레이아웃을 PNG 로 떠서 확인하고 곧장 종료한다.
+        if let path = ProcessInfo.processInfo.environment["CONNORPET_DEBUG_SETTINGS"] {
+            let controller = SettingsWindowController()
+            controller.delegate = self
+            controller.debugRenderPNG(to: path)
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+            return
+        }
 
         // 첫 클릭이 원문 발췌로 떨어지지 않도록, 뜨자마자 한 번 요약해 둔다.
         // 클릭과 똑같은 선택 로직을 쓴다.
@@ -269,7 +324,7 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         let service = BattleService(petSlug: selectedPetSlug)
         service.onPeersChanged = { [weak self] peers in
             self?.battlePeers = peers
-            self?.rebuildMenu()
+            self?.statusDidChange()
             self?.maybeAutoChallenge()
         }
         service.onIncomingChallenge = { [weak self] fromName, respond in
@@ -305,22 +360,39 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
     }
 
     @objc private func challengePeer(_ sender: NSMenuItem) {
-        guard let peerID = sender.representedObject as? String,
-              let peer = battlePeers.first(where: { $0.id == peerID }),
+        guard let peerID = sender.representedObject as? String else { return }
+        challenge(peerID: peerID)
+    }
+
+    /// 메뉴바·설정창 공통 진입점.
+    private func challenge(peerID: String) {
+        guard let peer = battlePeers.first(where: { $0.id == peerID }),
               let service = battleService else { return }
-        // Avoid stacking battles.
-        guard battleWindow == nil else { return }
+        // Avoid stacking battles / duplicate countdowns.
+        guard battleWindow == nil, challengeCountdown?.isShowing != true else { return }
+        // 신청자는 20초 카운트다운 막대를 본다. 그 안에 상대가 수락/거절하면 아래
+        // 콜백이 먼저 와서 막대를 감추고, 아무 응답이 없으면 네트워크가 시간이 다 돼
+        // .failed 를 돌려주고 "응답하지 않음" 모달로 이어진다.
+        if let petFrame = window?.frame {
+            challengeCountdown?.show(peerName: peer.name, above: petFrame, duration: challengeWaitSeconds)
+        }
         service.challenge(peer) { [weak self] result in
+            self?.challengeCountdown?.hide()
             switch result {
             case .accepted:
                 break // onBattleStart opens the window
             case .declined:
                 self?.showInfo(title: "대전 거절됨", text: "\(peer.name)님이 대전을 거절했어요.")
             case .failed:
-                self?.showInfo(title: "대전 실패", text: "\(peer.name)님과 연결하지 못했어요.")
-            case .incompatible:
-                self?.showInfo(title: "버전이 달라요",
-                               text: "\(peer.name)님의 앱이 다른 버전이라 대전할 수 없어요.\n양쪽 모두 최신 버전으로 업데이트해 주세요.")
+                    // 무응답(20초 카운트다운 막대가 다 지남)이나 연결 실패는 조용히 끝낸다.
+                    // 막대 자체가 이미 진행 상황을 보여줬으므로, 업무 중에 가운데 모달을
+                    // 또 띄우지 않는다("업무 방해 없이" 원칙). 막대만 사라진다.
+                    break
+                case .incompatible:
+                    // 이쪽은 알려 준다. 조용히 끝내면 왜 대전이 안 되는지 알 수가 없고,
+                    // 양쪽 다 업데이트해야 한다는 것은 사용자가 조치할 수 있는 일이다.
+                    self?.showInfo(title: "버전이 달라요",
+                                   text: "\(peer.name)님의 앱이 다른 버전이라 대전할 수 없어요.\n양쪽 모두 최신 버전으로 업데이트해 주세요.")
             }
         }
     }
@@ -332,14 +404,36 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
             respond(battleWindow == nil)
             return
         }
-        // If we're already in / setting up a battle, auto-decline.
-        guard battleWindow == nil, !pendingChallengeAlert else { respond(false); return }
-        pendingChallengeAlert = true
-        // Custom game-styled modal (a bold "BATTLE" banner instead of NSAlert's
-        // generic folder/app icon) — see BattleChallengeDialog.
-        let accepted = BattleDialog.challenge(fromName: fromName)
-        pendingChallengeAlert = false
-        respond(accepted)
+        // If we're already in / setting up a battle (or handling another
+        // challenge), auto-decline.
+        guard battleWindow == nil, !pendingChallengeBubble, !pendingChallengeAlert,
+              let petFrame = window?.frame else { respond(false); return }
+
+        // 업무 중 갑자기 가운데 모달이 뜨는 걸 막으려고, 먼저 펫 오른쪽 위에 작은
+        // "Challenge" 말풍선만 10초 띄운다. 누르면 예전처럼 가운데 수락/거절 모달로
+        // 이어지고, 누르지 않고 시간이 지나면 응답을 보내지 않는다(무응답).
+        pendingChallengeBubble = true
+        challengeBubble?.onClick = { [weak self] in
+            guard let self else { return }
+            self.pendingChallengeBubble = false
+            // Custom game-styled modal (a bold "BATTLE" banner instead of NSAlert's
+            // generic folder/app icon) — see BattleChallengeDialog. 10초 안에
+            // 응답하지 않으면 스스로 닫히고, 말풍선을 무시했을 때와 똑같이 무응답으로
+            // 처리한다(신청자 카운트다운이 "응답하지 않음"으로 마무리).
+            self.pendingChallengeAlert = true
+            let choice = BattleDialog.challenge(fromName: fromName, timeout: self.challengeModalSeconds)
+            self.pendingChallengeAlert = false
+            switch choice {
+            case .accept: respond(true)
+            case .decline: respond(false)
+            case .timedOut: break // 무응답
+            }
+        }
+        challengeBubble?.show(above: petFrame, duration: challengeBubbleSeconds) { [weak self] in
+            // 시간이 지나도록 누르지 않음 = 무응답. 응답을 보내지 않아, 신청자 쪽은
+            // 카운트다운이 끝나며 "응답하지 않음" 안내를 받는다.
+            self?.pendingChallengeBubble = false
+        }
     }
 
     private func presentBattle(myRole: BattleRole, outcome: BattleOutcome, opponentName: String, opponentPet: String) {
@@ -501,8 +595,13 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
     }
 
     @objc private func starePeer(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String,
-              let peer = battlePeers.first(where: { $0.id == id }) else { return }
+        guard let id = sender.representedObject as? String else { return }
+        stare(peerID: id)
+    }
+
+    /// 메뉴바·설정창 공통 진입점.
+    private func stare(peerID: String) {
+        guard let peer = battlePeers.first(where: { $0.id == peerID }) else { return }
         battleService?.stare(at: peer)
     }
 
@@ -533,7 +632,7 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         flame = nil
         guard let name = sheet.manifest.skill?.effect else { return }
         let base = (name as NSString).deletingPathExtension
-        guard let url = Bundle.module.url(forResource: base, withExtension: "png", subdirectory: "effects"),
+        guard let url = Self.resourceBundle.url(forResource: base, withExtension: "png", subdirectory: "effects"),
               let image = NSImage(contentsOf: url), image.size.height > 0 else { return }
         flameAspect = image.size.width / image.size.height
         flame = FlameWindow(image: image)
@@ -642,26 +741,88 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = Self.makeStatusIcon()
+        // We manage enablement ourselves (to gray out disabled rows); every other
+        // item defaults to enabled. 델리게이트를 걸어 두면 메뉴가 열리기 직전마다
+        // menuNeedsUpdate 로 항목을 다시 채운다 — 상태 변화는 그때 반영된다.
+        statusMenu.autoenablesItems = false
+        statusMenu.delegate = self
+        populateStatusMenu() // 첫 표시 전에도 비어 있지 않도록 한 번 채워 둔다
+        item.menu = statusMenu
         statusItem = item
-        rebuildMenu()
+    }
+
+    // 메뉴가 열리기 직전(추적 시작 전) AppKit 이 부른다. 이 시점에만 항목을 다시
+    // 채우므로, 열려 있는 메뉴를 건드리는 일이 없어 갈아끼우기 크래시가 안 난다.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === statusMenu else { return }
+        populateStatusMenu()
+    }
+
+    // MARK: - In-app update (Sparkle)
+
+    /// Wires up Sparkle for packaged builds and kicks off a **silent** launch
+    /// check (no pop-up). Availability shows only through the menu until the user
+    /// clicks the update item. Dev/`swift run` builds have no SUFeedURL, so the
+    /// updater stays nil and the menu shows a disabled "업데이트 확인" placeholder.
+    private func setUpUpdater() {
+        guard UpdaterManager.isConfigured else { return }
+        let mgr = UpdaterManager()
+        mgr.onAvailabilityChanged = { [weak self] available, version in
+            guard let self else { return }
+            self.updateAvailable = available
+            self.updateVersion = version
+            self.statusDidChange()
+        }
+        updater = mgr
+        mgr.checkQuietlyOnLaunch()
+    }
+
+    /// Human-readable build version pulled from Info.plist, e.g. "v1.3.0 (214)".
+    /// Shown as a disabled row so the user can see what they're running.
+    private var appVersionString: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "v\(short) (\(build))"
+    }
+
+    /// Builds the current-version row + the update row. When the silent launch
+    /// check found a newer version, the update row calls it out and highlights;
+    /// otherwise it's a plain "업데이트 확인…". Disabled (with a hint) when this
+    /// build isn't configured for updates (e.g. a local `swift run`).
+    private func appendVersionItems(to menu: NSMenu) {
+        let versionItem = NSMenuItem(title: "ConnorPet \(appVersionString)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
+        let updateItem: NSMenuItem
+        if updater == nil {
+            updateItem = NSMenuItem(title: "업데이트 확인 (이 빌드는 미지원)", action: nil, keyEquivalent: "")
+            updateItem.isEnabled = false
+        } else if updateAvailable, let v = updateVersion {
+            updateItem = NSMenuItem(title: "⬆︎ 업데이트 설치 (v\(v))", action: #selector(checkForUpdates), keyEquivalent: "")
+            updateItem.target = self
+        } else {
+            updateItem = NSMenuItem(title: "업데이트 확인…", action: #selector(checkForUpdates), keyEquivalent: "")
+            updateItem.target = self
+        }
+        menu.addItem(updateItem)
+    }
+
+    @objc private func checkForUpdates() {
+        updater?.userInitiatedCheck()
     }
 
     // MARK: - Menu-bar pet picker
 
-    private func rebuildMenu() {
-        let menu = NSMenu()
-        // We manage enablement ourselves (to gray out the threshold submenu when
-        // evolution is off); every other item defaults to enabled.
-        menu.autoenablesItems = false
-        for slug in Self.availablePetSlugs {
-            guard let title = petDisplayNames[slug] else { continue } // resources missing for this slug — skip it
-            let menuItem = NSMenuItem(title: title, action: #selector(selectPet(_:)), keyEquivalent: "")
-            menuItem.target = self
-            menuItem.representedObject = slug
-            menuItem.state = (slug == selectedPetSlug) ? .on : .off
-            menu.addItem(menuItem)
-        }
-        menu.addItem(.separator())
+    /// 상태바 메뉴 항목을 **기존 인스턴스(statusMenu)에 다시 채운다.** 새 NSMenu 를
+    /// 만들어 갈아 끼우지 않는다 — 그게 열린 메뉴를 해제시켜 크래시 나던 원인이었다.
+    /// 오직 setUpStatusItem 초기화와 menuNeedsUpdate(열리기 직전)에서만 부른다.
+    private func populateStatusMenu() {
+        let menu = statusMenu
+        menu.removeAllItems()
+        // 펫 선택은 메뉴바에서 제거하고 설정 창에서만 바꾸도록 함 — 노치/과밀로
+        // 목록이 길어지는 것을 막고 설정 창으로 진입점을 일원화한다.
         for source in Self.availableStatusSources {
             let title = Self.statusSourceDisplayNames[source] ?? source
             let menuItem = NSMenuItem(title: title, action: #selector(selectStatusSource(_:)), keyEquivalent: "")
@@ -672,11 +833,11 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         }
 
         // Installs the Claude Code hooks (into ~/.claude/settings.json) that add
-        // the 얼음(blocked)/헤롱헤롱(done) states on top of the plain busy/idle a
-        // DMG user gets by default — the in-app path to
+        // the 헤롱헤롱(done)/실패(failed) states on top of the busy/blocked/idle a
+        // DMG user already gets from the session files — the in-app path to
         // scripts/install_claude_hooks.py, which they can't run without the repo.
         // Checkmark reflects whether the hooks are currently installed.
-        let hookItem = NSMenuItem(title: "Claude Code 상태 훅 (얼음/헤롱헤롱)", action: #selector(toggleClaudeHooks), keyEquivalent: "")
+        let hookItem = NSMenuItem(title: "Claude Code 상태 훅 (헤롱헤롱/실패)", action: #selector(toggleClaudeHooks), keyEquivalent: "")
         hookItem.target = self
         hookItem.state = ClaudeHookInstaller.isInstalled() ? .on : .off
         menu.addItem(hookItem)
@@ -716,10 +877,43 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         menu.addItem(makeStareMenuItem())
 
         menu.addItem(.separator())
+        appendVersionItems(to: menu)
+
+        menu.addItem(.separator())
+        // 펫 우클릭과 동일한 설정 창 진입점 — 메뉴바에서도 열 수 있게 한다.
+        let settingsItem = NSMenuItem(title: "설정…", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
-        statusItem?.menu = menu
+        // statusMenu 는 이미 statusItem.menu 로 걸려 있으므로 다시 대입하지 않는다.
+    }
+
+    /// 상태가 바뀌었을 때 부른다. 메뉴는 다음에 열릴 때 menuNeedsUpdate 로 알아서
+    /// 다시 채워지므로 여기서 건드리지 않는다(그게 크래시 원인이었다). 대신, 같은
+    /// 값을 보여 주는 설정 창이 떠 있으면 함께 갱신한다(대전 상대 목록, 훅/권한
+    /// 상태, 진화/경험치 토글 등이 메뉴바나 밖에서 바뀔 수 있다). refresh 는 창이
+    /// 보일 때만 실제로 돈다.
+    private func statusDidChange() {
+        settingsController?.refresh()
+    }
+
+    /// 메뉴바 › "설정…" 진입점. 펫 우클릭과 같은 창을 연다.
+    @objc private func openSettingsFromMenu() {
+        openSettingsWindow()
+    }
+
+    /// 펫 우클릭 › "설정…" 진입점. 창을 (없으면 만들어) 띄운다.
+    private func openSettingsWindow() {
+        if settingsController == nil {
+            let controller = SettingsWindowController()
+            controller.delegate = self
+            settingsController = controller
+        }
+        settingsController?.show()
     }
 
     /// Installs or removes the Claude Code status hooks. Because this writes to
@@ -729,7 +923,7 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         if ClaudeHookInstaller.isInstalled() {
             guard BattleDialog.confirm(
                 title: "Claude Code 상태 훅 제거",
-                message: "~/.claude/settings.json에서 connor-pet이 추가한\n훅을 제거합니다. 얼음/헤롱헤롱 상태 표시가 꺼지고\nbusy/idle 만 남습니다.\n\n다른 훅 설정은 건드리지 않습니다.",
+                message: "~/.claude/settings.json에서 connor-pet이 추가한\n훅을 제거합니다. 헤롱헤롱/실패 표시가 꺼지고\n달리기/얼음/잠듦(세션파일 기준)만 남습니다.\n\n다른 훅 설정은 건드리지 않습니다.",
                 confirmTitle: "제거"
             ) else { return }
             do {
@@ -741,17 +935,17 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         } else {
             guard BattleDialog.confirm(
                 title: "Claude Code 상태 훅 설치",
-                message: "~/.claude/settings.json에 6개의 훅을 추가해\n얼음(권한 대기)·헤롱헤롱(작업 완료) 상태를\n표시합니다.\n\n기존 설정은 타임스탬프를 붙여 백업하고,\n다른 훅은 건드리지 않습니다. (python3 필요)",
+                message: "~/.claude/settings.json에 2개의 훅(Stop·SessionEnd)을\n추가해 헤롱헤롱(작업 완료)·실패 상태를 표시합니다.\n(달리기/얼음/잠듦은 훅 없이 세션파일로 이미 표시돼요.)\n\n기존 설정은 타임스탬프를 붙여 백업하고,\n다른 훅은 건드리지 않습니다. (python3 필요)",
                 confirmTitle: "설치"
             ) else { return }
             do {
                 try ClaudeHookInstaller.install()
-                showInfo(title: "훅 설치 완료", text: "Claude Code 상태 훅을 설치했어요.\n소스가 'Claude Code'일 때 얼음/헤롱헤롱까지 보여요.\n실행 중인 세션은 다음 턴부터 반영돼요.")
+                showInfo(title: "훅 설치 완료", text: "Claude Code 상태 훅을 설치했어요.\n소스가 'Claude Code'일 때 헤롱헤롱/실패까지 보여요.\n실행 중인 세션은 다음 턴부터 반영돼요.")
             } catch {
                 showInfo(title: "훅 설치 실패", text: error.localizedDescription)
             }
         }
-        rebuildMenu()
+        statusDidChange()
     }
 
     /// Opens the Full Disk Access settings pane so the Claude Desktop source can
@@ -774,11 +968,15 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         FullDiskAccess.openSettings()
     }
 
-    @objc private func toggleBarAlwaysVisible() {
-        barAlwaysVisible.toggle()
+    @objc private func toggleBarAlwaysVisible() { setBarAlwaysVisible(!barAlwaysVisible) }
+
+    /// 메뉴바·설정창 공통 진입점.
+    private func setBarAlwaysVisible(_ on: Bool) {
+        guard on != barAlwaysVisible else { return }
+        barAlwaysVisible = on
         petView?.setBarAlwaysVisible(barAlwaysVisible)
         Self.saveBarAlwaysVisible(barAlwaysVisible)
-        rebuildMenu()
+        statusDidChange()
     }
 
     // MARK: - Menu-bar evolution controls
@@ -809,18 +1007,23 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         recentQuests = []
         currentPercent = 0
         applyStage()   // 단계가 0으로 떨어지고 refreshDisplayedPet 이 기본형으로 되돌린다
-        rebuildMenu()
+        statusDidChange()
     }
 
-    @objc private func toggleEvolutionEnabled() {
-        evolutionEnabled.toggle()
+    @objc private func toggleEvolutionEnabled() { setEvolutionEnabled(!evolutionEnabled) }
+
+    /// 메뉴바·설정창 공통 진입점.
+    private func setEvolutionEnabled(_ on: Bool) {
+        guard on != evolutionEnabled else { return }
+        evolutionEnabled = on
         Self.saveEvolutionEnabled(evolutionEnabled)
         applyStage() // evolve to the earned stage, or revert to base, immediately
-        rebuildMenu()
+        statusDidChange()
     }
 
-    @objc private func selectPet(_ sender: NSMenuItem) {
-        guard let slug = sender.representedObject as? String, slug != selectedPetSlug else { return }
+    /// 메뉴바·설정창 공통 진입점. 펫을 바꾸고 상태를 다시 잡는다.
+    private func changePet(to slug: String) {
+        guard slug != selectedPetSlug else { return }
         // 펫을 바꾸기 전에 지금까지 쌓인 값을 확정해 둔다. 주기 저장만 믿으면
         // 전환 직전 몇 초치가 날아간다.
         tokenSaveTimer?.invalidate(); tokenSaveTimer = nil
@@ -836,17 +1039,23 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         // Re-derive the shown form from the new base + current XP stage (so
         // picking a pet while already "leveled up" shows its evolved form).
         refreshDisplayedPet()
-        rebuildMenu()
+        statusDidChange()
     }
 
     // MARK: - Menu-bar status-source picker
 
     @objc private func selectStatusSource(_ sender: NSMenuItem) {
-        guard let source = sender.representedObject as? String, source != selectedStatusSource else { return }
+        guard let source = sender.representedObject as? String else { return }
+        changeStatusSource(to: source)
+    }
+
+    /// 메뉴바·설정창 공통 진입점.
+    private func changeStatusSource(to source: String) {
+        guard source != selectedStatusSource else { return }
         selectedStatusSource = source
         Self.saveStatusSource(source)
         startWatcher(for: source)
-        rebuildMenu()
+        statusDidChange()
     }
 
     private func startWatcher(for source: String) {
@@ -862,6 +1071,53 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         }
         newWatcher.start()
         watcher = newWatcher
+    }
+
+    // MARK: - First-run wizard
+
+    /// 설치 후 최초 1회만 뜨는 2단계 마법사: ①펫 고르기(이미지) → ②사용하는 앱
+    /// 고르기(Claude Code / Claude Desktop / Orca). 고른 값을 즉시 반영·저장하고
+    /// 완료 플래그를 남겨 재실행 때는 뜨지 않는다. 창을 만들기 *전에* 불려서
+    /// 마법사에서 고른 펫으로 창을 띄운다.
+    private func maybeRunFirstRunWizard() {
+        guard !Self.didCompleteFirstRun() else { return }
+        // 헤드리스 셀프테스트/설정 PNG 덤프/강제 펫 지정 실행에서는 모달로 막지 않는다.
+        let env = ProcessInfo.processInfo.environment
+        if env["CONNORPET_SELFTEST"] != nil || env["CONNORPET_DEBUG_SETTINGS"] != nil || env["CONNORPET_PET"] != nil {
+            return
+        }
+
+        // 펫 선택지(썸네일 = idle 첫 프레임)를 메뉴와 같은 순서로 만든다.
+        let pets: [FirstRunWizard.PetOption] = Self.availablePetSlugs.compactMap { slug in
+            guard let name = petDisplayNames[slug] else { return nil }
+            let image = (try? Self.loadSpriteSheet(slug: slug))?
+                .resolvedAnimation(for: .idle)?.images.first
+            return FirstRunWizard.PetOption(slug: slug, name: name, image: image)
+        }
+        let sources = Self.availableStatusSources.map {
+            FirstRunWizard.SourceOption(id: $0, name: Self.statusSourceDisplayNames[$0] ?? $0,
+                                        icon: Self.sourceIcon($0))
+        }
+
+        let result = FirstRunWizard.run(pets: pets, sources: sources)
+        if let slug = result.petSlug, petDisplayNames[slug] != nil {
+            selectedPetSlug = slug
+            Self.savePetSlug(slug)
+        }
+        if let source = result.sourceID, Self.availableStatusSources.contains(source) {
+            selectedStatusSource = source
+            Self.saveStatusSource(source)
+        }
+        Self.markFirstRunComplete()
+    }
+
+    /// Bundled step-2 app icon for a status source (`Resources/source-icons/<id>.png`).
+    /// See Package.swift for the artwork sources/licenses.
+    private static func sourceIcon(_ id: String) -> NSImage? {
+        guard let url = resourceBundle.url(forResource: id, withExtension: "png", subdirectory: "source-icons") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
     }
 
     // MARK: - 펫별 경험치 저장
@@ -1003,22 +1259,27 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         return try SpriteSheet(manifestURL: manifestURL, spritesheetURL: spritesheetURL)
     }
 
-    // SwiftPM's generated Bundle.module only looks for the resource bundle next to
-    // the raw executable (Bundle.main.bundleURL) or a hardcoded build-time path —
-    // neither works once ConnorPet is wrapped in a proper, code-signed .app: a
-    // resource bundle sitting loose at the .app root (outside Contents/) makes
-    // codesign refuse to seal the bundle ("unsealed contents present in the
-    // bundle root"), which macOS then reports as "damaged" once quarantined.
-    // Prefer Contents/Resources first (where the .app packaging step places it);
-    // Bundle.module still covers plain `swift run`/`.build/release/ConnorPet`,
-    // where Bundle.main.resourceURL already points at the same flat directory
-    // the loose bundle sits in.
+    // The SwiftPM resource bundle always sits next to the app's resources:
+    //   - code-signed .app  → Contents/Resources/ConnorPet_ConnorPet.bundle
+    //   - plain `swift run` → .build/<config>/ConnorPet_ConnorPet.bundle
+    // and `Bundle.main.resourceURL` points at that directory in both cases, so this
+    // single lookup covers dev and release alike.
+    //
+    // We deliberately do NOT fall back to SwiftPM's generated `Bundle.module`. Its
+    // only candidates are the .app root (Bundle.main.bundleURL) and a build-time
+    // hardcoded path (`/Users/runner/...` on CI) — the former can't be used because
+    // a loose bundle at the .app root makes codesign refuse to seal it ("unsealed
+    // contents present in the bundle root" → macOS reports "damaged" once
+    // quarantined), and the latter never exists on a user's machine. Both only ever
+    // masked bugs, so a missing bundle should fail loudly here instead.
     static let resourceBundle: Bundle = {
-        if let resourceURL = Bundle.main.resourceURL {
-            let candidate = resourceURL.appendingPathComponent("ConnorPet_ConnorPet.bundle")
-            if let bundle = Bundle(url: candidate) { return bundle }
+        guard
+            let resourceURL = Bundle.main.resourceURL,
+            let bundle = Bundle(url: resourceURL.appendingPathComponent("ConnorPet_ConnorPet.bundle"))
+        else {
+            fatalError("리소스 번들을 찾을 수 없음: \(Bundle.main.resourceURL?.path ?? "nil")/ConnorPet_ConnorPet.bundle")
         }
-        return Bundle.module
+        return bundle
     }()
 
     // Menu-bar glyph for the Totodile pet: a Poké Ball outline, drawn to match
@@ -1104,6 +1365,22 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         return saved
     }
 
+    // MARK: - First-run flag persistence
+
+    // Whether the first-run wizard (pet + source picker) has already been shown.
+    // Set once and never cleared, so it appears on first install only, not on
+    // relaunch. (swift-run and the .app use different UserDefaults domains, so
+    // each sees its own first run — see README.)
+    private static let didCompleteFirstRunDefaultsKey = "didCompleteFirstRun"
+
+    private static func didCompleteFirstRun() -> Bool {
+        UserDefaults.standard.bool(forKey: didCompleteFirstRunDefaultsKey)
+    }
+
+    private static func markFirstRunComplete() {
+        UserDefaults.standard.set(true, forKey: didCompleteFirstRunDefaultsKey)
+    }
+
     // MARK: - XP bar visibility persistence
 
     private static let barAlwaysVisibleDefaultsKey = "xpBarAlwaysVisible"
@@ -1168,4 +1445,45 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         let onScreen = NSScreen.screens.contains { $0.visibleFrame.insetBy(dx: -40, dy: -40).contains(saved) }
         return onScreen ? saved : fallback
     }
+}
+
+// MARK: - 설정 창 다리
+
+/// 설정 창이 읽고 부르는 표면. 전부 메뉴바 아이템이 쓰던 것과 **같은** 코드
+/// 경로(changePet / changeStatusSource / setEvolutionEnabled / toggleClaudeHooks
+/// 등)로 위임해, 어느 쪽에서 바꾸든 동작·저장·메뉴바 갱신이 동일하다.
+extension AppDelegate: SettingsActionsDelegate {
+    var settingsOrderedPets: [(slug: String, name: String)] {
+        Self.availablePetSlugs.compactMap { slug in
+            petDisplayNames[slug].map { (slug, $0) }
+        }
+    }
+    var settingsSelectedPetSlug: String { selectedPetSlug }
+    func settingsSelectPet(slug: String) { changePet(to: slug) }
+
+    var settingsOrderedStatusSources: [(id: String, name: String)] {
+        Self.availableStatusSources.map { ($0, Self.statusSourceDisplayNames[$0] ?? $0) }
+    }
+    var settingsSelectedStatusSource: String { selectedStatusSource }
+    func settingsSelectStatusSource(id: String) { changeStatusSource(to: id) }
+
+    var settingsEvolutionEnabled: Bool { evolutionEnabled }
+    func settingsSetEvolutionEnabled(_ on: Bool) { setEvolutionEnabled(on) }
+    var settingsBarAlwaysVisible: Bool { barAlwaysVisible }
+    func settingsSetBarAlwaysVisible(_ on: Bool) { setBarAlwaysVisible(on) }
+
+    func settingsResetAllXP() { resetAllXP() }
+
+    var settingsHooksInstalled: Bool { ClaudeHookInstaller.isInstalled() }
+    func settingsToggleHooks() { toggleClaudeHooks() }
+    var settingsFullDiskAccessGranted: Bool { FullDiskAccess.isGranted() }
+    func settingsOpenFullDiskAccess() { openFullDiskAccess() }
+
+    var settingsBattlePeers: [(id: String, name: String)] {
+        battlePeers.map { ($0.id, $0.name) }
+    }
+    func settingsChallenge(peerID: String) { challenge(peerID: peerID) }
+    func settingsStare(peerID: String) { stare(peerID: peerID) }
+
+    func settingsQuit() { quit() }
 }

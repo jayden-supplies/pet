@@ -6,37 +6,71 @@ import Foundation
 /// `OrcaStatusWatcher`'s shape so the menu-bar source picker can swap between
 /// the two transparently.
 ///
-/// Two sources are merged every poll:
+/// **No hook is required** — the session file plus a little edge-detection give
+/// us every state (running/waiting/idle/done/failed). The hook file, when
+/// present, is a strictly optional overlay. Two sources are merged every poll,
+/// with the session file authoritative:
 ///
 /// 1. `~/.claude/sessions/<pid>.json` — one file per running CLI process
 ///    (the same files backing `claude agents`/`claude agents --json`).
-///    Confirmed live fields (v2.1.197): `status` ("busy" while a turn is in
-///    flight, "idle" once control returns to the user), `sessionId`, `cwd`,
-///    `name`. This alone only distinguishes busy/idle — there's no reliable
-///    on-disk signal here for "blocked on a permission prompt" or "done,
-///    awaiting review" (a richer `tempo`/`waitingFor` field exists in the
-///    schema but was never observed populated in practice).
+///    Confirmed live fields (v2.1.197): `sessionId`, `cwd`, `name`, and a
+///    `status` that Claude Code keeps *level-triggered* — always the current
+///    truth: "busy" while a turn is in flight, "waiting" (with `waitingFor`,
+///    e.g. "permission prompt") while blocked on the user, "idle" between
+///    turns. This directly covers working/blocked/idle. We additionally watch
+///    each session's busy→idle transition (a turn ending — the same edge the
+///    Stop hook fires on) and mint "done", upgraded to "failed" when the
+///    transcript's last tool result is an error (`lastToolErrored`, ported
+///    from the hook). So done/failed are derived here too — no hook needed.
+///    Because it's PID-keyed and we gate on `kill(pid, 0)`, a dead session can
+///    never linger as a ghost.
 ///
-/// 2. `~/.claude/connor-pet-status.json` — written by our own Claude Code
-///    hooks (`scripts/claude_hook_status.py`, wired into `Notification`/
-///    `Stop`/`UserPromptSubmit`/`PreToolUse`/`SessionEnd` in the user's
-///    `~/.claude/settings.json` — see README "Claude Code 훅으로 얼음/헤롱헤롱까지
-///    보기"). This is the *only* source of the richer blocked/done states;
-///    it's optional — if the user hasn't installed the hooks, this file
-///    simply doesn't exist and we fall back to busy/idle from (1) alone.
-///    Shaped exactly like Orca's last-status.json, so it reuses
+/// 2. `~/.claude/pet-status.json` — written by our own Claude Code hooks
+///    (`scripts/pet_hook_status.py`, wired into `Stop`/`SessionEnd` in the
+///    user's `~/.claude/settings.json` — see README "Claude Code 훅으로
+///    헤롱헤롱/실패까지 보기"). Purely optional now that done/failed are derived
+///    above; its only remaining edge is surviving an app restart (a turn that
+///    ended while the app was closed, so we never saw the live transition).
+///    Shaped like Orca's last-status.json, so it reuses
 ///    `parseAgentStatusEntries` unchanged.
 ///
-/// Where both sources have an entry for the same session, the hook-authored
-/// one wins (it's strictly more precise).
+/// Merge rule (see `poll()`): the session file decides working/blocked/idle;
+/// an otherwise-idle session is *upgraded* to done/failed, preferring the hook
+/// entry when installed, else our own edge-detected one. An overlay can never
+/// force blocked/working, so a stale one can never mask a live session — that
+/// hook-wins inversion was the old "frozen on 얼음 mid-session" bug.
+///
+/// Orca exclusion: sessions Orca launched also write `~/.claude/sessions` files
+/// (they're the same `claude` processes), so this source would otherwise report
+/// them too. Since the Orca source already covers those, we read Orca's own
+/// `last-status.json` and skip any sessionId it lists (`orcaManagedSessionIds`).
+/// The result: "Claude Code" tracks your standalone/terminal sessions, "Orca"
+/// tracks Orca's — no double-counting. No-op when Orca isn't installed.
 final class ClaudeCodeStatusWatcher: AgentStatusWatching {
     private let sessionsDir: URL
     private let hookStatusFileURL: URL
     private let projectsDir: URL
+    /// Orca's own status file. We read it only to learn which sessionIds Orca is
+    /// managing, so this source can *exclude* them (the Orca source is for those).
+    private let orcaStatusFileURL: URL
     private let pollInterval: TimeInterval
     private var timer: Timer?
     private var lastFingerprint: [String: Date] = [:]
     private var acknowledgedAtMs: Double = 0
+
+    // Per-session tracking so we can detect the busy→idle (Stop) edge ourselves
+    // and synthesize done/failed with no hook installed — see the switch in
+    // `poll()`. `lastBusyIdleBySession` remembers each session's prior status;
+    // `completionBySession` holds the done/failed we minted at its last Stop
+    // (it must outlive the edge poll, since the session stays idle afterward).
+    // Both are pruned each poll to sessions whose files still exist.
+    private var lastBusyIdleBySession: [String: String] = [:]
+    private var completionBySession: [String: (state: String, at: Double)] = [:]
+
+    // Accumulated sessionIds Orca has ever reported managing (see poll()). Grows
+    // as Orca claims sessions, pruned to sessions whose files still exist so it
+    // can't grow without bound. Robust to Orca's flickering last-status.json.
+    private var orcaSeenSessionIds: Set<String> = []
 
     private let tokenReader = TranscriptTokenReader()
     // Resolved `<sessionId>.jsonl` paths, cached so we don't rescan the
@@ -48,8 +82,10 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
     init(pollInterval: TimeInterval = 0.25) {
         let home = FileManager.default.homeDirectoryForCurrentUser
         self.sessionsDir = home.appendingPathComponent(".claude/sessions")
-        self.hookStatusFileURL = home.appendingPathComponent(".claude/connor-pet-status.json")
+        self.hookStatusFileURL = home.appendingPathComponent(".claude/pet-status.json")
         self.projectsDir = home.appendingPathComponent(".claude/projects")
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        self.orcaStatusFileURL = appSupport.appendingPathComponent("Orca/agent-hooks/last-status.json")
         self.pollInterval = pollInterval
     }
 
@@ -86,7 +122,12 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
             fingerprint[file.lastPathComponent] = mtime ?? .distantPast
         }
         let hookAttrs = try? FileManager.default.attributesOfItem(atPath: hookStatusFileURL.path)
-        fingerprint["connor-pet-status.json"] = (hookAttrs?[.modificationDate] as? Date) ?? .distantPast
+        fingerprint["pet-status.json"] = (hookAttrs?[.modificationDate] as? Date) ?? .distantPast
+        // Orca's file too: when it changes, the set of Orca-managed sessions we
+        // exclude may change, so we must re-evaluate. (Absent when Orca isn't
+        // installed → .distantPast, no churn.)
+        let orcaAttrs = try? FileManager.default.attributesOfItem(atPath: orcaStatusFileURL.path)
+        fingerprint["orca-last-status.json"] = (orcaAttrs?[.modificationDate] as? Date) ?? .distantPast
         // Also fold in the transcripts we already resolved on prior polls, so a
         // token count that grows mid-turn refreshes the XP bar even in the rare
         // window where the session file itself didn't change.
@@ -112,38 +153,88 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
             }
         }
 
+        // Sessions Orca launched are shown by the Orca source; exclude them here
+        // so selecting "Claude Code" doesn't double-report them. We *accumulate*
+        // the sessionIds Orca reports rather than trusting a single snapshot:
+        // Orca rewrites last-status.json on every hook across every pane, and an
+        // actively-working session's `providerSession.id` isn't present in every
+        // rewrite (observed flickering). Since a sessionId is unique to one
+        // session for its whole life, "Orca ever reported it" is a safe, stable
+        // signal — and we prune ids back out once their session file is gone.
+        orcaSeenSessionIds.formUnion(orcaManagedSessionIds())
+
+        let now = Date().timeIntervalSince1970 * 1000
         var entries: [AgentStatusEntry] = []
+        var seenSessionIds = Set<String>()
         for (sessionId, session) in sessionsById {
+            seenSessionIds.insert(sessionId)
             guard session.alive else { continue }
+            // Skip Orca-managed sessions (the Orca source owns those).
+            if orcaSeenSessionIds.contains(sessionId) { continue }
             let label = "claude-code:\(session.name ?? sessionId)"
             let transcriptPath = transcriptPath(forSessionId: sessionId)
-            if let hookEntry = hookEntriesById[sessionId] {
-                entries.append(AgentStatusEntry(
-                    paneKey: label,
-                    state: hookEntry.state,
-                    workingMode: nil,
-                    worktreeId: hookEntry.worktreeId ?? session.cwd,
-                    updatedAt: hookEntry.updatedAt,
-                    transcriptPath: transcriptPath
-                ))
-            } else {
-                entries.append(AgentStatusEntry(
-                    paneKey: label,
-                    state: session.busyIdleState,
-                    workingMode: nil,
-                    worktreeId: session.cwd,
-                    updatedAt: session.updatedAt,
-                    transcriptPath: transcriptPath
-                ))
+
+            // Detect the busy→idle (Stop) edge ourselves so done/failed work
+            // without any hook. This is exactly what the Stop hook keys off: a
+            // turn ending. We decide done vs failed the same way the hook does
+            // — by inspecting the transcript tail for a last tool that errored
+            // (`last_tool_errored` in pet_hook_status.py, ported below).
+            let prev = lastBusyIdleBySession[sessionId]
+            switch session.busyIdleState {
+            case "working", "blocked":
+                // Active again — cancel any pending completion for this session.
+                completionBySession[sessionId] = nil
+            case "idle" where prev == "working":
+                let doneState = lastToolErrored(transcriptPath: transcriptPath) ? "failed" : "done"
+                completionBySession[sessionId] = (state: doneState, at: now)
+            default:
+                break
             }
+            lastBusyIdleBySession[sessionId] = session.busyIdleState
+
+            // The session file is authoritative for working/blocked/idle (it's
+            // live and level-triggered). For an *idle* session we overlay a
+            // completion state (리뷰 대기 하트 / 실패): the hook file wins when
+            // installed (it survives app restarts and cross-checks the same
+            // transcript), otherwise our own edge-detected one. Either way it's
+            // stamped with when the turn ended, so decayStaleStates ages it and
+            // suppressAcknowledgedDone can hover-dismiss it. A completion can
+            // never force blocked/working, so nothing here can freeze a live pet.
+            var state = session.busyIdleState
+            var updatedAt = session.updatedAt
+            if session.busyIdleState == "idle" {
+                if let hookEntry = hookEntriesById[sessionId],
+                   hookEntry.state == "done" || hookEntry.state == "failed" {
+                    state = hookEntry.state
+                    updatedAt = hookEntry.updatedAt
+                } else if let completion = completionBySession[sessionId] {
+                    state = completion.state
+                    updatedAt = completion.at
+                }
+            }
+
+            entries.append(AgentStatusEntry(
+                paneKey: label,
+                state: state,
+                workingMode: nil,
+                worktreeId: session.cwd,
+                updatedAt: updatedAt,
+                transcriptPath: transcriptPath
+            ))
         }
-        // Hook entries for sessions whose file we couldn't cross-reference
-        // (e.g. already cleaned up) — include as-is rather than drop, since
-        // agentStateAnimation's staleness gate already protects against these
-        // lingering forever if a SessionEnd hook never fires (crash, etc.).
-        for (sessionId, hookEntry) in hookEntriesById where sessionsById[sessionId] == nil {
-            entries.append(hookEntry)
-        }
+        // Hook entries for sessions with no live session file are deliberately
+        // dropped: a hook state we can't tie to a running process is unreliable
+        // (SessionEnd→remove doesn't fire on crash/kill), and appending stale
+        // "blocked" ones as-is was exactly the old frozen-ice bug.
+
+        // Prune per-session tracking for sessions whose files are gone, so the
+        // two dictionaries can't grow without bound over a long-lived app.
+        lastBusyIdleBySession = lastBusyIdleBySession.filter { seenSessionIds.contains($0.key) }
+        completionBySession = completionBySession.filter { seenSessionIds.contains($0.key) }
+        // Keep only Orca ids whose session file still exists — a live session
+        // that flickered out of Orca's file stays excluded (its file is present),
+        // while a truly ended session is forgotten so the set stays bounded.
+        orcaSeenSessionIds = orcaSeenSessionIds.intersection(seenSessionIds)
 
         publish(entries: entries)
     }
@@ -168,6 +259,81 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
         return nil
     }
 
+    // How much of the transcript's tail to inspect for a failed tool. Kept in
+    // lockstep with pet_hook_status.py's constants so the in-app path and the
+    // hook agree on what counts as "failed". Transcripts reach tens of MB, so
+    // this is seeked from the end rather than read from the top.
+    private static let transcriptTailBytes: UInt64 = 256 * 1024
+    private static let transcriptTailLines = 80
+
+    /// True when the most recent tool result in the transcript is an error.
+    /// Ported from `last_tool_errored` in pet_hook_status.py — called only at the
+    /// busy→idle edge (once per turn), so it never runs on the hot poll path.
+    ///
+    /// Only the *last* tool result counts: a tool that failed and was then
+    /// retried successfully isn't a failure worth showing; a turn whose final
+    /// tool errored is. The transcript is read (not the session file) because
+    /// that's the only place the error lands — matching the hook's reasoning.
+    private func lastToolErrored(transcriptPath: String?) -> Bool {
+        guard let path = transcriptPath,
+              let handle = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? handle.close() }
+        let data: Data
+        do {
+            let end = try handle.seekToEnd()
+            let start = end > Self.transcriptTailBytes ? end - Self.transcriptTailBytes : 0
+            try handle.seek(toOffset: start)
+            data = handle.readDataToEndOfFile()
+        } catch {
+            return false
+        }
+        guard let text = String(data: data, encoding: .utf8) else { return false }
+        // The first line after an arbitrary seek is usually a partial record;
+        // dropping it (matching the hook's `[1:]`) is why we require >1 line.
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        guard lines.count > 1 else { return false }
+        lines.removeFirst()
+        if lines.count > Self.transcriptTailLines {
+            lines = Array(lines.suffix(Self.transcriptTailLines))
+        }
+        for raw in lines.reversed() {
+            guard let lineData = raw.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  let message = obj["message"] as? [String: Any],
+                  let content = message["content"] as? [[String: Any]]
+            else { continue }
+            for block in content.reversed() where (block["type"] as? String) == "tool_result" {
+                return (block["is_error"] as? Bool) ?? false
+            }
+        }
+        return false
+    }
+
+    /// sessionIds that Orca is currently tracking, read from its own
+    /// `last-status.json`. Each entry carries the Claude Code session id at
+    /// `providerSession.id` (with `key == "session_id"`) — a direct field, so we
+    /// don't have to parse it out of the transcript filename. Used to exclude
+    /// Orca-launched sessions from this source. Returns an empty set (→ no
+    /// exclusion) when Orca isn't installed or the file can't be read/parsed, so
+    /// a machine without Orca behaves exactly as before.
+    private func orcaManagedSessionIds() -> Set<String> {
+        guard
+            let data = try? Data(contentsOf: orcaStatusFileURL),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let entries = root["entries"] as? [String: Any]
+        else { return [] }
+        var ids = Set<String>()
+        for (_, value) in entries {
+            guard
+                let entry = value as? [String: Any],
+                let providerSession = entry["providerSession"] as? [String: Any],
+                let id = providerSession["id"] as? String
+            else { continue }
+            ids.insert(id)
+        }
+        return ids
+    }
+
     private struct SessionInfo {
         let name: String?
         let cwd: String?
@@ -190,15 +356,18 @@ final class ClaudeCodeStatusWatcher: AgentStatusWatching {
         // linger after the CLI quits without cleaning up.
         let alive = kill(pid_t(pid), 0) == 0
 
+        // Claude Code's own live status (v2.1.197): "busy" during a turn,
+        // "waiting" while blocked on the user (with `waitingFor`, e.g.
+        // "permission prompt"), "idle" between turns. Maps straight onto the
+        // same working/blocked/idle vocabulary Orca uses. `waitingFor` isn't
+        // needed for the mapping — any "waiting" is an actionable 얼음 — but a
+        // richer state could key off it later.
         let status = root["status"] as? String
-        let tempo = root["tempo"] as? String
         let busyIdleState: String
-        if tempo == "blocked" {
-            busyIdleState = "blocked"
-        } else if status == "busy" || tempo == "active" {
-            busyIdleState = "working"
-        } else {
-            busyIdleState = "idle"
+        switch status {
+        case "busy":    busyIdleState = "working"
+        case "waiting": busyIdleState = "blocked"
+        default:        busyIdleState = "idle"
         }
 
         let updatedAt = (root["statusUpdatedAt"] as? NSNumber)?.doubleValue
