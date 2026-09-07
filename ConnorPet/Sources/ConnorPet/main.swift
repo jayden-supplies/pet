@@ -7,6 +7,11 @@ if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "battle" {
     runBattleSelfTest()
 }
 
+// .app 번들 판별(전체 디스크 접근 안내를 가른다): `CONNORPET_SELFTEST=bundle swift run`.
+if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "bundle" {
+    runBundleSelfTest()
+}
+
 // 설정 창 입력란 붙여넣기: `CONNORPET_SELFTEST=paste swift run`.
 if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "paste" {
     runPasteSelfTest()

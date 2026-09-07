@@ -778,6 +778,37 @@ HP 5 인 상대를 **한 방에 눕힙니다**. 진화 단계는 곱연산으로
 | 중간 vs 0 | 90.3% | 4.1 |
 | 최강 vs 0 | 98.4% | 1.9 |
 
+## 권한 목록에 ConnorPet 대신 숫자가 뜨는 문제
+
+시스템 설정 › 개인정보 보호 및 보안 › 전체 디스크 접근에 `ConnorPet` 이 아니라
+`2.1.263` 같은 **버전 숫자**가 보이는 일이 있습니다.
+
+`swift run` 은 앱 번들이 아니라 **맨 실행 파일**을 띄웁니다. 그런 프로세스가 보호된
+자원을 요구하면 macOS 는 권한을 그것을 **띄운 앱**에 귀속시킵니다 — 터미널이나 Claude
+Code 같은 것들입니다. 목록에 뜬 숫자는 그 앱의 버전 문자열입니다.
+
+거기에 체크해도 펫이 아니라 **그 앱에** 권한을 주는 것이고, 그 앱이 업데이트되면 경로가
+바뀌어 다시 풀립니다. 그래서 이 상태에서는 설정 창을 열어 주지 않고 사정을 설명합니다
+(`FullDiskAccess.isAppBundle`). "만드는 명령 복사" 를 누르면 아래가 클립보드에 들어갑니다.
+
+```sh
+bash <저장소>/scripts/make_app.sh && open ~/Applications/ConnorPet.app
+```
+
+이렇게 만든 `.app` 은 `CFBundleName = ConnorPet` 과 코드 서명 식별자
+`io.github.pet-egg.connorpet` 을 갖기 때문에 권한 목록에 **ConnorPet** 으로 뜹니다.
+터미널을 닫아도 죽지 않는다는 이점은 덤입니다.
+
+```sh
+CONNORPET_SELFTEST=bundle CONNORPET_EXPECT_BUNDLE=0 swift run
+CONNORPET_SELFTEST=bundle CONNORPET_EXPECT_BUNDLE=1 \
+  ~/Applications/ConnorPet.app/Contents/MacOS/ConnorPet
+```
+
+두 상태를 모두 확인합니다. 안내 명령이 **실제로 있는 스크립트**를 가리키는지도 봅니다 —
+경로 탐색이 어긋나면 붙여 넣어도 실행되지 않습니다(실측에서 SwiftPM 판에 따라
+`.build/debug` 와 `.build/arm64-apple-macosx/debug` 로 깊이가 달랐습니다).
+
 ## 설정 창이 안 뜨던 문제
 
 메뉴바나 펫 우클릭에서 **설정…** 을 눌렀는데 아무 일도 없는 것처럼 보이는 일이

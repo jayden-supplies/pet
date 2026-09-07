@@ -325,13 +325,23 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func integrationRows(_ d: SettingsActionsDelegate) -> [RowSpec] {
         let hooks = makeSwitch(on: d.settingsHooksInstalled, action: #selector(hooksToggled(_:)))
         let granted = d.settingsFullDiskAccessGranted
-        let fdaButton = makeButton(title: granted ? "확인" : "열기", action: #selector(fdaPressed))
         var rows = [
             RowSpec(title: "Claude Code 상태 훅", subtitle: "헤롱헤롱(작업 완료) / 실패 표시", control: hooks),
-            RowSpec(title: "전체 디스크 접근 권한",
-                    subtitle: granted ? "허용됨 — 완료 알림으로 헤롱헤롱 감지" : "헤롱헤롱 알림 감지에 필요",
-                    control: fdaButton),
         ]
+        if FullDiskAccess.isAppBundle {
+            rows.append(RowSpec(title: "전체 디스크 접근 권한",
+                                subtitle: granted ? "허용됨 — 완료 알림으로 헤롱헤롱 감지" : "헤롱헤롱 알림 감지에 필요",
+                                control: makeButton(title: granted ? "확인" : "열기",
+                                                    action: #selector(fdaPressed))))
+        } else {
+            // 번들이 아니면 설정 창을 열어 줘 봐야 목록에 ConnorPet 이 안 뜬다.
+            // 대신 왜 그런지와 어떻게 하면 되는지를 알려 준다.
+            rows.append(RowSpec(title: "전체 디스크 접근 권한 — 지금은 줄 수 없어요",
+                                subtitle: "swift run 은 앱 번들이 아니라, 목록에 띄운 앱 이름이 대신 떠요",
+                                control: makeButton(title: "만드는 명령 복사",
+                                                    action: #selector(fdaCopyBuildCommand)),
+                                dimmed: true))
+        }
         rows += linearRows(d)
         return rows
     }
@@ -398,6 +408,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // 입력란은 곧바로 비운다. 값이 화면에 남아 있을 이유가 없다.
         field.stringValue = ""
         delegate?.settingsSaveLinearKey(key)
+    }
+
+    /// `.app` 을 만드는 명령을 클립보드에 넣는다. 붙여 넣고 실행하면 이름이 제대로
+    /// 뜨는 앱이 만들어진다.
+    @objc private func fdaCopyBuildCommand() {
+        let command = FullDiskAccess.makeAppCommand()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
+        BattleDialog.info(title: "명령을 복사했어요",
+                          message: "터미널에 붙여 넣고 실행하면\nConnorPet.app 이 만들어져요.\n\n그 앱으로 실행하면 전체 디스크 접근\n목록에 ConnorPet 으로 나옵니다.")
     }
 
     @objc private func linearOpenPressed() {

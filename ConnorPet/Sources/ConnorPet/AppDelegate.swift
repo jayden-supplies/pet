@@ -945,11 +945,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the app's "작업 완료" banner and show 헤롱헤롱 — that needs Full Disk
         // Access. Checkmark = granted; clicking opens the settings pane. Without
         // it the desktop source still works (CPU-only done), so this is opt-in.
-        let fdaGranted = FullDiskAccess.isGranted()
-        let fdaItem = NSMenuItem(title: "전체 디스크 접근 권한 (헤롱헤롱 알림)", action: #selector(openFullDiskAccess), keyEquivalent: "")
-        fdaItem.target = self
-        fdaItem.state = fdaGranted ? .on : .off
-        menu.addItem(fdaItem)
+        // 번들이 아니면(swift run) 설정 창을 열어 줘 봐야 목록에 ConnorPet 이 없다 —
+        // 권한이 띄운 앱에 귀속돼 그 앱의 버전 문자열이 대신 뜬다. 설정 창에서
+        // 사정을 설명하므로 여기서는 그리로 보낸다.
+        if FullDiskAccess.isAppBundle {
+            let fdaItem = NSMenuItem(title: "전체 디스크 접근 권한 (헤롱헤롱 알림)",
+                                     action: #selector(openFullDiskAccess), keyEquivalent: "")
+            fdaItem.target = self
+            fdaItem.state = FullDiskAccess.isGranted() ? .on : .off
+            menu.addItem(fdaItem)
+        } else {
+            let item = NSMenuItem(title: "전체 디스크 접근 권한 — 앱으로 만들어야 해요",
+                                  action: #selector(openSettingsFromMenu), keyEquivalent: "")
+            item.target = self
+            item.toolTip = "swift run 은 앱 번들이 아니라 권한 목록에 ConnorPet 이 뜨지 않습니다."
+                + " 설정 창에서 만드는 명령을 복사할 수 있어요."
+            menu.addItem(item)
+        }
 
         menu.addItem(.separator())
         // When on, the XP bar is always visible; when off, it only appears while
