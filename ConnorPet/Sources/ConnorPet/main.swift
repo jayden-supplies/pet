@@ -7,6 +7,11 @@ if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "battle" {
     runBattleSelfTest()
 }
 
+// 노려보기 알림에 뜨는 펫 얼굴: `CONNORPET_SELFTEST=portrait swift run`.
+if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "portrait" {
+    runPortraitSelfTest()
+}
+
 // 퀘스트 축하 말풍선이 겹치지 않고 하나씩 뜨는지: `CONNORPET_SELFTEST=celebrate swift run`.
 if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "celebrate" {
     runCelebrationSelfTest()

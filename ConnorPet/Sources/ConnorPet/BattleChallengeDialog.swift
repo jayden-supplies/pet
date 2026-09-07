@@ -42,12 +42,16 @@ enum BattleDialog {
     }
 
     /// One-button info popup (e.g. declined / failed), same look, no banner.
-    static func info(title: String, message: String) {
+    ///
+    /// `portrait` 를 주면 제목 위에 그 그림이 뜬다. 노려보기가 이걸 쓴다 — 누가
+    /// 노려봤는지는 이름보다 펫 얼굴이 빨리 읽힌다.
+    static func info(title: String, message: String, portrait: NSImage? = nil) {
         let controller = DialogController(
             showsBanner: false,
             title: title,
             message: message,
-            buttons: [.init(title: "확인", kind: .primary)]
+            buttons: [.init(title: "확인", kind: .primary)],
+            portrait: portrait
         )
         _ = controller.runModal()
     }
@@ -77,10 +81,13 @@ final class DialogController: NSObject {
     private let title: String
     private let message: String
     private let buttons: [Button]
+    private let portrait: NSImage?
     private var panel: NSPanel?
     private var autoDismissTimer: Timer?
 
-    init(showsBanner: Bool, title: String, message: String, buttons: [Button]) {
+    init(showsBanner: Bool, title: String, message: String, buttons: [Button],
+         portrait: NSImage? = nil) {
+        self.portrait = portrait
         self.showsBanner = showsBanner
         self.title = title
         self.message = message
@@ -89,7 +96,8 @@ final class DialogController: NSObject {
 
     func runModal(autoDismissAfter: TimeInterval? = nil) -> Int {
         let width: CGFloat = 380
-        let height: CGFloat = showsBanner ? 324 : 208
+        // 초상이 붙으면 그만큼 키운다. 고정 높이에 밀어 넣으면 문구와 겹친다.
+        let height: CGFloat = showsBanner ? 324 : (portrait == nil ? 208 : 208 + DialogContentView.portraitBox + 12)
         let panel = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.borderless],
@@ -104,7 +112,7 @@ final class DialogController: NSObject {
 
         let content = DialogContentView(
             frame: NSRect(x: 0, y: 0, width: width, height: height),
-            showsBanner: showsBanner, title: title, message: message
+            showsBanner: showsBanner, title: title, message: message, portrait: portrait
         )
 
         // Lay out the buttons along the bottom.
@@ -208,11 +216,16 @@ final class DialogContentView: NSView {
     private let showsBanner: Bool
     private let titleText: String
     private let messageText: String
+    private let portrait: NSImage?
 
-    init(frame: NSRect, showsBanner: Bool, title: String, message: String) {
+    /// 초상을 담는 정사각형 한 변.
+    static let portraitBox: CGFloat = 104
+
+    init(frame: NSRect, showsBanner: Bool, title: String, message: String, portrait: NSImage? = nil) {
         self.showsBanner = showsBanner
         self.titleText = title
         self.messageText = message
+        self.portrait = portrait
         super.init(frame: frame)
         wantsLayer = true
     }
@@ -235,6 +248,11 @@ final class DialogContentView: NSView {
             y -= 84
             drawBattleBanner(in: NSRect(x: (w - 220) / 2, y: y, width: 220, height: 60))
             y -= 24
+        } else if let portrait {
+            y -= 24 + Self.portraitBox
+            drawPortrait(portrait, in: NSRect(x: (w - Self.portraitBox) / 2, y: y,
+                                              width: Self.portraitBox, height: Self.portraitBox))
+            y -= 16
         } else {
             y -= 40
         }
@@ -257,6 +275,36 @@ final class DialogContentView: NSView {
         ]
         let mRect = NSRect(x: 24, y: 80, width: w - 48, height: y - 80)
         (messageText as NSString).draw(in: mRect, withAttributes: msgAttrs)
+    }
+
+    /// 상대 펫의 얼굴. 둥근 사각형 안에 픽셀을 살려 그린다.
+    ///
+    /// 보간을 끈다 — 도트 그림을 매끄럽게 늘리면 흐릿해져서 원본보다 못하다.
+    /// 그림이 칸보다 크면 비율을 지키며 맞추고, 작으면 확대한다. 어느 펫이든
+    /// 같은 크기로 보이는 것이 목적이다(알파 경계는 PetPortrait 가 이미 잘라 뒀다).
+    private func drawPortrait(_ image: NSImage, in box: NSRect) {
+        let frame = NSBezierPath(roundedRect: box, xRadius: 20, yRadius: 20)
+        NSColor(calibratedWhite: 1, alpha: 0.06).setFill()
+        frame.fill()
+        NSColor(calibratedWhite: 1, alpha: 0.12).setStroke()
+        frame.lineWidth = 1
+        frame.stroke()
+
+        NSGraphicsContext.saveGraphicsState()
+        frame.addClip()
+        NSGraphicsContext.current?.imageInterpolation = .none
+        let inset = box.insetBy(dx: 6, dy: 6)
+        let size = image.size
+        guard size.width > 0, size.height > 0 else {
+            NSGraphicsContext.restoreGraphicsState()
+            return
+        }
+        let scale = min(inset.width / size.width, inset.height / size.height)
+        let drawn = NSSize(width: size.width * scale, height: size.height * scale)
+        image.draw(in: NSRect(x: inset.midX - drawn.width / 2,
+                              y: inset.midY - drawn.height / 2,
+                              width: drawn.width, height: drawn.height))
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// The "BATTLE" banner that replaces NSAlert's folder icon: a warm gradient

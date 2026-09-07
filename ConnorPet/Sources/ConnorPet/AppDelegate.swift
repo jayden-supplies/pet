@@ -84,6 +84,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // this set). Display names shown in the menu come from each pet's own
     // manifest rather than being duplicated here.
     private static let availablePetSlugs = ["totodile", "ditto", "charmander", "squirtle", "geodude", "eevee", "chikorita", "torchic", "togepi", "tepig", "snorlax", "gengar", "diglett"]
+
+    /// 번들에 들어 있는 **모든** 펫 slug — 메뉴에 안 뜨는 진화형까지. 상대가 진화한
+    /// 펫으로 노려볼 수 있으므로 초상 검증은 이 목록 전체를 봐야 한다.
+    static var bundledPetSlugs: [String] {
+        guard let root = resourceBundle.resourceURL?.appendingPathComponent("pets"),
+              let names = try? FileManager.default.contentsOfDirectory(atPath: root.path)
+        else { return availablePetSlugs }
+        let fm = FileManager.default
+        return names.filter {
+            fm.fileExists(atPath: root.appendingPathComponent($0)
+                .appendingPathComponent("pet.json").path)
+        }.sorted()
+    }
     private var petDisplayNames: [String: String] = [:]
     private var selectedPetSlug = availablePetSlugs[0]
 
@@ -467,8 +480,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// placeholder while nobody's around yet.
     /// 누가 노려봤을 때 뜨는 알림. 확인 버튼 하나뿐이다.
     private func presentStare(fromName: String, fromPet: String) {
+        // 상대 펫의 얼굴을 함께 띄운다 — 누가 노려봤는지는 이름보다 그림이 빨리 읽힌다.
+        // 그림은 주고받지 않고 slug 로 각자 번들에서 찾는다(PetPortrait 참고).
+        // 우리 번들에 없는 펫이면 nil 이라 문구만 뜬다.
         BattleDialog.info(title: "노려보기",
-                          message: "\(fromName)의 \(Self.koreanPetName(fromPet))가\n노려봅니다.")
+                          message: "\(fromName)의 \(Self.koreanPetName(fromPet))가\n노려봅니다.",
+                          portrait: PetPortrait.face(of: fromPet))
     }
 
     /// 매니페스트의 표시 이름("파이리 (Charmander)")에서 한글 이름만 뽑는다.
@@ -1050,7 +1067,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         applyStage()
 
         Self.savePetSlug(slug)
-        battleService?.updatePet(slug) // re-advertise so peers see our new character
         // Re-derive the shown form from the new base + current XP stage (so
         // picking a pet while already "leveled up" shows its evolved form).
         refreshDisplayedPet()
@@ -1226,6 +1242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let slug = displaySlug(base: selectedPetSlug, stage: currentStage)
         guard slug != currentDisplaySlug, let sheet = cachedSheet(slug: slug) else { return }
         currentDisplaySlug = slug
+        // 상대에게 알리는 펫도 **지금 보이는 쪽**으로 맞춘다. 메뉴에서 고른 기본형을
+        // 그대로 광고하면, 리자몽으로 진화해 놓고도 상대 화면에는 "파이리가
+        // 노려봅니다" 와 파이리 얼굴이 뜬다. 메뉴 선택도 진화도 이 함수를 지나므로
+        // 여기 한 곳에서 갱신하면 둘 다 덮인다.
+        battleService?.updatePet(slug)
 
         // 프레임 크기가 다른 펫으로 바뀌면 창도 같이 커지거나 작아져야 한다. 중심을
         // 유지해서 바꾸면 펫이 제자리에 있는 것처럼 보인다. 여기가 시트를 갈아 끼우는
