@@ -7,6 +7,11 @@ if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "battle" {
     runBattleSelfTest()
 }
 
+// 경험치 감사 인사(간격 규칙 + 말풍선 모양): `CONNORPET_SELFTEST=thanks swift run`.
+if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "thanks" {
+    runThanksSelfTest()
+}
+
 // Linear API 키 보관: `CONNORPET_SELFTEST=keychain swift run`.
 if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "keychain" {
     runLinearKeychainSelfTest()

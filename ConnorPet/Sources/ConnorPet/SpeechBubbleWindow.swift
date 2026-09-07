@@ -1,5 +1,18 @@
 import AppKit
 
+/// 말풍선 종류. 경험치가 오른 것을 알리는 말풍선은 브리핑과 다르게 그린다 —
+/// 브리핑은 읽어야 하는 글이고, 이쪽은 "얼마 올랐다" 가 눈에 들어와야 한다.
+enum BubbleStyle {
+    /// 브리핑·평소 말하기. 시스템 배경색을 따른다(다크 모드면 어둡다).
+    case normal
+    /// 경험치 알림. 흰 바탕에 경험치 바와 같은 초록을 쓴다.
+    case reward
+
+    /// 경험치 바 0단계 색. 바와 말풍선이 같은 초록이어야 "그 경험치" 로 읽힌다
+    /// (`PetView.stageColor(0)` 과 같은 값 — 색을 옮길 때 두 곳을 함께 고쳐야 한다).
+    static let rewardGreen = NSColor(calibratedRed: 0.37, green: 0.82, blue: 0.40, alpha: 1)
+}
+
 /// The rounded panel body plus the little tail that points down at the pet.
 private final class SpeechBubbleView: NSView {
     static let tailHeight: CGFloat = 9
@@ -8,6 +21,7 @@ private final class SpeechBubbleView: NSView {
     static let padding = NSEdgeInsets(top: 11, left: 13, bottom: 11, right: 13)
 
     var tailCenterX: CGFloat = 0 { didSet { needsDisplay = true } }
+    var style: BubbleStyle = .normal { didSet { needsDisplay = true } }
 
     override var isFlipped: Bool { true }
 
@@ -26,10 +40,20 @@ private final class SpeechBubbleView: NSView {
         tail.close()
         path.append(tail)
 
-        NSColor.windowBackgroundColor.withAlphaComponent(0.97).setFill()
-        path.fill()
-        NSColor.separatorColor.setStroke()
-        path.lineWidth = 1
+        switch style {
+        case .normal:
+            NSColor.windowBackgroundColor.withAlphaComponent(0.97).setFill()
+            path.fill()
+            NSColor.separatorColor.setStroke()
+            path.lineWidth = 1
+        case .reward:
+            // 다크 모드에서도 흰 바탕이다. 시스템 색을 따르면 초록 글자가 어두운
+            // 바탕에 얹혀 경험치 바와 다른 색으로 보인다.
+            NSColor.white.setFill()
+            path.fill()
+            BubbleStyle.rewardGreen.setStroke()
+            path.lineWidth = 1.5
+        }
         path.stroke()
     }
 }
@@ -80,11 +104,19 @@ final class SpeechBubbleWindow: NSPanel {
 
     /// Shows `text` above `petFrame` (screen coordinates) and hides it again
     /// after `duration`.
-    func show(text: String, above petFrame: NSRect, duration: TimeInterval) {
+    func show(text: String, above petFrame: NSRect, duration: TimeInterval,
+              style: BubbleStyle = .normal) {
         let inset = SpeechBubbleView.padding
         let textWidth = Self.maxWidth - inset.left - inset.right
 
-        label.stringValue = text
+        bubble.style = style
+        switch style {
+        case .normal:
+            label.textColor = .labelColor
+            label.stringValue = text
+        case .reward:
+            label.attributedStringValue = Self.rewardText(text)
+        }
         label.preferredMaxLayoutWidth = textWidth
         let textSize = label.sizeThatFits(NSSize(width: textWidth, height: .greatestFiniteMagnitude))
 
@@ -119,6 +151,31 @@ final class SpeechBubbleWindow: NSPanel {
         dismissTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
             self?.hide()
         }
+    }
+
+    /// 경험치 알림 문구. `+300,000 EXP` 처럼 숫자와 EXP 로 끝나는 부분에 형광펜을
+    /// 칠하듯 초록 배경을 깔고 글자도 진한 초록으로 바꾼다 — 얼마 올랐는지가 먼저
+    /// 읽혀야 한다. 나머지 줄은 흰 바탕에 검은 글씨다.
+    private static func rewardText(_ text: String) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 2
+
+        let full = NSMutableAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 11.5),
+            .foregroundColor: NSColor(calibratedWhite: 0.13, alpha: 1),
+            .paragraphStyle: paragraph,
+        ])
+
+        // "+숫자 EXP" 를 찾아 강조한다. 없으면 그냥 검은 글씨로 남는다.
+        guard let range = text.range(of: #"\+[0-9,]+ EXP"#, options: .regularExpression) else {
+            return full
+        }
+        full.addAttributes([
+            .font: NSFont.systemFont(ofSize: 12, weight: .bold),
+            .foregroundColor: NSColor(calibratedRed: 0.13, green: 0.50, blue: 0.20, alpha: 1),
+            .backgroundColor: BubbleStyle.rewardGreen.withAlphaComponent(0.28),
+        ], range: NSRange(range, in: text))
+        return full
     }
 
     func hide() {

@@ -75,7 +75,7 @@ final class PetView: NSView {
     /// Left click (not a drag). The delegate returns the text to say, or nil
     /// to stay quiet.
     var onClick: (() -> String?)?
-    var onSpeak: ((_ text: String, _ duration: TimeInterval) -> Void)?
+    var onSpeak: ((_ text: String, _ duration: TimeInterval, _ style: BubbleStyle) -> Void)?
     var onSilence: (() -> Void)?
     /// Fires once each time the pointer enters the pet — the "you noticed it"
     /// gesture AppDelegate uses to dismiss a lingering review/헤롱헤롱 state.
@@ -213,7 +213,7 @@ final class PetView: NSView {
     }
 
     /// 아직 띄우지 못한 축하들. 한 번에 여러 퀘스트가 잡히면 여기에 줄을 선다.
-    private var celebrationQueue: [String] = []
+    private var celebrationQueue: [(text: String, style: BubbleStyle)] = []
     /// 지금 떠 있는 말풍선이 축하인가(브리핑과 구분해야 이어 붙일지 판단할 수 있다).
     private var celebrating = false
     private var celebrationWork: DispatchWorkItem?
@@ -223,8 +223,8 @@ final class PetView: NSView {
     ///
     /// 고정된 모션은 밀어내지 않는다. 손으로 자세를 잡아 놓고 보는 중일 수 있는데
     /// 축하가 그것을 덮으면 지시를 뺏는 셈이다 — 말풍선과 점프만 쓴다.
-    func enqueueCelebration(_ text: String) {
-        celebrationQueue.append(text)
+    func enqueueCelebration(_ text: String, style: BubbleStyle = .reward) {
+        celebrationQueue.append((text, style))
         drainCelebrations()
     }
 
@@ -237,7 +237,8 @@ final class PetView: NSView {
         guard !celebrationQueue.isEmpty, !speaking else { return }
         celebrating = true
         if pinnedAnimation == nil { _ = playOnce(.jumping) }
-        speak(celebrationQueue.removeFirst(), duration: Self.celebrationDuration)
+        let next = celebrationQueue.removeFirst()
+        speak(next.text, duration: Self.celebrationDuration, style: next.style)
     }
 
     /// 말풍선이 사라진 직후에 부른다. 간격을 두고 다음 축하로 넘어간다.
@@ -255,10 +256,11 @@ final class PetView: NSView {
     /// 줄 서 있는 축하 개수. 자체검증이 본다.
     var pendingCelebrations: Int { celebrationQueue.count }
 
-    private func speak(_ text: String, duration: TimeInterval = PetView.briefingDuration) {
+    private func speak(_ text: String, duration: TimeInterval = PetView.briefingDuration,
+                       style: BubbleStyle = .normal) {
         speaking = true
         applyDisplayAnimation()
-        onSpeak?(text, duration)
+        onSpeak?(text, duration, style)
 
         speakingTimer?.invalidate()
         speakingTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in

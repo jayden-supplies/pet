@@ -11,6 +11,11 @@ import AppKit
 /// 6초씩 기다리지 않도록 `CONNORPET_CELEBRATION_SECONDS` 로 줄여서 돈다.
 ///
 /// Prints `SELFTEST PASS`/`SELFTEST FAIL` and exits — never returns.
+private func isReward(_ style: BubbleStyle) -> Bool {
+    if case .reward = style { return true }
+    return false
+}
+
 func runCelebrationSelfTest() -> Never {
     func fail(_ why: String) -> Never {
         print("SELFTEST FAIL: \(why)")
@@ -28,9 +33,9 @@ func runCelebrationSelfTest() -> Never {
     view.setBaseAnimation(.idle)
 
     let start = ProcessInfo.processInfo.systemUptime
-    var shown: [(text: String, at: Double)] = []
-    view.onSpeak = { text, _ in
-        shown.append((text, ProcessInfo.processInfo.systemUptime - start))
+    var shown: [(text: String, at: Double, style: BubbleStyle)] = []
+    view.onSpeak = { text, _, style in
+        shown.append((text, ProcessInfo.processInfo.systemUptime - start, style))
     }
 
     let texts = ["첫 번째", "두 번째", "세 번째"]
@@ -59,6 +64,11 @@ func runCelebrationSelfTest() -> Never {
                 fail("\(i)번째와 \(i + 1)번째가 \(String(format: "%.2f", apart))초 만에 이어졌다"
                      + " — 노출 \(hold)초보다 짧아 겹친다")
             }
+        }
+        // 축하는 경험치 말풍선 모양이어야 한다 — 브리핑과 같은 회색으로 뜨면 무엇이
+        // 올랐는지 눈에 안 들어온다.
+        for entry in shown where !isReward(entry.style) {
+            fail("축하가 경험치 말풍선이 아니다: \(entry.text)")
         }
         let spacing = (1..<shown.count).map { String(format: "%.1f", shown[$0].at - shown[$0 - 1].at) }
         print("[selftest] 순서대로 3개 · 간격 \(spacing.joined(separator: ", "))초 (겹침 없음)")

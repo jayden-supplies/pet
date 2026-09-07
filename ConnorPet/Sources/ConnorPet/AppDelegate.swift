@@ -152,6 +152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var questService: QuestService?
     /// Linear 키의 마지막 확인 결과. 설정 창이 보여 준다.
     private var linearStatus: String?
+
+    /// 언제 고맙다고 말할지 정하는 계산기. 규칙과 검증은 `ThanksThrottle` 에 있다.
+    private var thanks = ThanksThrottle()
     /// 최근에 깬 퀘스트. 메뉴 목록에만 쓰고, 경험치는 지급 즉시 펫에 들어간다.
     private var recentQuests: [Quest] = []
     private var currentDisplaySlug = ""
@@ -222,9 +225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.xpDetailWindow?.hide()
         }
         view.onClick = { [weak self] in self?.briefingText() }
-        view.onSpeak = { [weak self] text, duration in
+        view.onSpeak = { [weak self] text, duration, style in
             guard let self, let petFrame = self.window?.frame else { return }
-            self.bubble?.show(text: text, above: petFrame, duration: duration)
+            self.bubble?.show(text: text, above: petFrame, duration: duration, style: style)
         }
         view.onSilence = { [weak self] in self?.bubble?.hide() }
         view.onFlameFrame = { [weak self] mouthInFrame, grow in
@@ -1196,6 +1199,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         currentPercent = XPModel.percent(tokens: petTokens[selectedPetSlug] ?? 0)
         applyStage()
+        maybeThank(gained: result.gainedTokens)
+    }
+
+    /// 경험치를 받은 것에 대해 고맙다고 말한다. 말할 때가 됐는지는 `ThanksThrottle` 이 정한다.
+    private func maybeThank(gained newTokens: Double) {
+        guard let total = thanks.add(newTokens, now: Date()) else { return }
+        let gained = Int(total.rounded())
+        let amount = Self.numberFormatter.string(from: NSNumber(value: gained)) ?? "\(gained)"
+        petView?.enqueueCelebration("\(Self.thanksLine())\n+\(amount) EXP")
+        questLog("감사 인사 +\(gained) EXP")
+    }
+
+    /// 인사말. 매번 같은 말을 하면 금세 배경이 되어 읽지 않게 되므로 돌려 쓴다.
+    /// 무엇을 받았는지(경험치)를 밥으로 바꿔 말하는 쪽이 펫답다.
+    private static func thanksLine() -> String {
+        let lines = [
+            "와~! 고마워! 잘 먹었어",
+            "냠냠… 맛있다! 고마워",
+            "우와, 배부르다! 고마워",
+            "고마워! 힘이 솟아나",
+            "밥 잘 먹었어! 더 클게",
+            "헤헤, 또 줘! 고마워",
+        ]
+        return lines.randomElement() ?? lines[0]
     }
 
     /// 호버 중이면 펫 아래에 상세 문구를 띄우고, 아니면 감춘다. 값이 갱신될 때마다
