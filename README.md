@@ -886,8 +886,9 @@ GUI 앱은 셸의 `PATH` 를 물려받지 못해서 `/opt/homebrew/bin/gh` 같�
 Linear 에는 `gh` 같은 CLI 가 없어서 GraphQL API 를 직접 부르고, 개인 API 키를
 **키체인**(암호를 안전하게 보관하는 macOS 기능)에서 읽습니다.
 
-Linear → Settings → Security & access → Personal API keys 에서 키를 만든 뒤,
-**설정 창 → 연동 → Linear API 키** 에 붙여 넣고 `저장` 을 누릅니다. 입력란은 값이
+**설정 창 → 연동 → Linear에서 키 만들기 → `열기`** 를 누르면 Linear 의 개인 API 키
+화면(Settings › Security & access › Personal API keys)이 브라우저에서 열립니다. 거기서
+키를 만들어 바로 아래 **Linear API 키** 에 붙여 넣고 `저장` 을 누릅니다. 입력란은 값이
 보이지 않는 칸이고, 누르는 즉시 지웠다가 다시 채워집니다.
 
 저장은 곧 **확인**입니다. 키를 키체인에 넣기 전에 Linear 에 한 번 물어보고, 통하면
@@ -902,7 +903,30 @@ Linear → Settings → Security & access → Personal API keys 에서 키를 �
 security add-generic-password -s connor-pet-linear -a linear -w
 ```
 
-키가 없으면 티켓 퀘스트만 꺼지고 PR 퀘스트는 그대로 돕니다.
+키가 없으면 티켓 퀘스트만 꺼지고 PR 퀘스트는 그대로 돕니다. 그동안 펫이 5분에 한 번
+`Linear를 연결해봐! 티켓 끝내면 경험치 줄게` 하고 권합니다 — 다른 말풍선과 겹치지 않게
+같은 줄에 서고, 키를 넣으면 저절로 멈춥니다. 경험치 알림이 아니므로 초록 강조는 쓰지
+않습니다.
+
+#### 붙여넣기가 안 되던 문제
+
+이 앱은 `.accessory` 라 Dock 아이콘도 메뉴 막대도 없습니다. 그런데 ⌘V 같은 단축키는
+**`NSApp.mainMenu` 를 뒤져서** 처리됩니다 — 메뉴가 아예 없으면 갈 곳이 없어 아무 일도
+일어나지 않습니다. 키를 복사해 와도 붙일 수가 없었습니다.
+
+그래서 잘라내기·복사·붙여넣기·모두 선택만 담은 최소한의 메뉴를 만들어 둡니다
+(`EditMenu`). 화면에는 아무것도 나타나지 않습니다 — 오로지 단축키를 받아 주는
+통로입니다. 동작은 `nil` 타깃으로 보내 지금 편집 중인 입력란이 응답자 사슬에서 받게
+합니다(특정 필드를 가리키면 필드가 늘 때마다 고쳐야 합니다).
+
+```sh
+CONNORPET_SELFTEST=paste swift run
+```
+
+메뉴에 ⌘V 가 있는지만 보지 않고 **실제로 붙여 봅니다** — 항목이 있어도 셀렉터나 응답자
+사슬이 어긋나면 여전히 안 붙기 때문입니다. `NSApp.sendAction(to: nil)` 은 앱 이벤트
+루프가 돌아야 응답자를 찾으므로 `app.run()` 안에서 시험하고, 빌려 쓴 클립보드는 원래
+내용으로 되돌려 놓습니다.
 
 #### 키체인 암호를 자꾸 물으면
 

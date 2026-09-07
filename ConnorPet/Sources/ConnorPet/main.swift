@@ -7,6 +7,11 @@ if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "battle" {
     runBattleSelfTest()
 }
 
+// 설정 창 입력란 붙여넣기: `CONNORPET_SELFTEST=paste swift run`.
+if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "paste" {
+    runPasteSelfTest()
+}
+
 // 경험치 감사 인사(간격 규칙 + 말풍선 모양): `CONNORPET_SELFTEST=thanks swift run`.
 if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "thanks" {
     runThanksSelfTest()

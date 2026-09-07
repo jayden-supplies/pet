@@ -155,6 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// 언제 고맙다고 말할지 정하는 계산기. 규칙과 검증은 `ThanksThrottle` 에 있다.
     private var thanks = ThanksThrottle()
+    /// Linear 를 아직 안 붙였을 때 권하는 주기.
+    private var linearNudge = PeriodicReminder(interval: ThanksThrottle.interval)
     /// 최근에 깬 퀘스트. 메뉴 목록에만 쓰고, 경험치는 지급 즉시 펫에 들어간다.
     private var recentQuests: [Quest] = []
     private var currentDisplaySlug = ""
@@ -162,6 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // menu-bar utility, no Dock icon
+        // ⌘V 같은 단축키는 메인 메뉴를 뒤져서 처리된다. 이 앱은 메뉴 막대를 그리지
+        // 않지만, 메뉴 자체가 없으면 설정 창 입력란에 붙여넣기가 안 된다.
+        EditMenu.install()
 
         for slug in Self.availablePetSlugs {
             if let sheet = try? Self.loadSpriteSheet(slug: slug) {
@@ -1200,6 +1205,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         currentPercent = XPModel.percent(tokens: petTokens[selectedPetSlug] ?? 0)
         applyStage()
         maybeThank(gained: result.gainedTokens)
+        maybeSuggestLinear()
+    }
+
+    /// Linear 를 안 붙였으면 가끔 권한다. 붙이면 저절로 멈춘다.
+    ///
+    /// 키체인을 읽지 않고 저장 여부 플래그만 본다 — 값을 읽으면 그 순간 암호 창이
+    /// 뜬다(`LinearKeychain` 참고). 말은 축하와 같은 줄에 세워, 다른 말풍선과
+    /// 겹치지 않고 차례를 기다린다.
+    private func maybeSuggestLinear() {
+        let now = Date()
+        guard !LinearKeychain.isStored else {
+            // 붙인 뒤에 지웠다면 곧바로 잔소리하지 않게 시계를 다시 맞춰 둔다.
+            linearNudge.postpone(to: now)
+            return
+        }
+        guard linearNudge.due(now: now) else { return }
+        petView?.enqueueCelebration(Self.linearNudgeLine(), style: .normal)
+    }
+
+    /// 권유 문구. 경험치 알림이 아니므로 초록 강조를 쓰지 않는다.
+    private static func linearNudgeLine() -> String {
+        let lines = [
+            "Linear를 연결해봐! 티켓 끝내면 경험치 줄게",
+            "Linear 연결하면 티켓도 밥이 돼. 설정에서!",
+            "티켓 Done도 경험치야. Linear 연결해봐",
+            "설정에서 Linear 붙이면 더 많이 먹을 수 있어",
+        ]
+        return lines.randomElement() ?? lines[0]
     }
 
     /// 경험치를 받은 것에 대해 고맙다고 말한다. 말할 때가 됐는지는 `ThanksThrottle` 이 정한다.

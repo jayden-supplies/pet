@@ -340,11 +340,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         stack.spacing = 6
         stack.frame.size = stack.fittingSize
 
-        var rows = [RowSpec(title: "Linear API 키",
+        // 키를 어디서 만드는지 모르면 입력란만 있어 봐야 소용이 없다. Linear 의
+        // 개인 API 키 화면으로 바로 보낸다.
+        var rows = [RowSpec(title: "Linear에서 키 만들기",
+                            subtitle: "Settings › Security & access › Personal API keys",
+                            control: makeButton(title: "열기", action: #selector(linearOpenPressed)))]
+        rows.append(RowSpec(title: "Linear API 키",
                             subtitle: d.settingsLinearStatus
                                 ?? (stored ? "저장됨 — 티켓 Done 이 퀘스트로 잡혀요"
                                            : "넣으면 티켓 Done 도 퀘스트가 돼요"),
-                            control: stack)]
+                            control: stack))
         // 키체인 항목은 앱의 코드 서명에 묶여 있고 ad-hoc 서명은 빌드마다 바뀐다.
         // 암호 창이 왜 뜨는지 모르면 앱이 고장 난 줄 안다.
         if stored {
@@ -368,6 +373,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // 입력란은 곧바로 비운다. 값이 화면에 남아 있을 이유가 없다.
         field.stringValue = ""
         delegate?.settingsSaveLinearKey(key)
+    }
+
+    @objc private func linearOpenPressed() {
+        NSWorkspace.shared.open(URL(string: "https://linear.app/settings/account/security")!)
     }
 
     @objc private func linearDeletePressed() {
