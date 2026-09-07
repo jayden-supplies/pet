@@ -43,7 +43,7 @@ struct Quest: Equatable {
 /// 조용히 꺼진다 — GitHub 퀘스트는 그대로 돈다.
 final class QuestService {
     /// 퀘스트 하나당 주는 경험치.
-    static let rewardPerQuest: Double = 200_000
+    static let rewardPerQuest: Double = 300_000
     /// 훑는 주기.
     static let pollInterval: TimeInterval = 5 * 60
     /// 얼마나 옛것까지 볼지. 이보다 오래된 것은 "새로 끝난 것" 일 수가 없다.
