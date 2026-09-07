@@ -104,6 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 폴링마다 UserDefaults 에 쓰면 초당 몇 번씩 디스크를 건드린다. 값은 메모리에
     /// 두고 주기적으로만 내려쓰고, 종료 시 한 번 더 확실히 쓴다.
     private var tokenSaveTimer: Timer?
+    private var questService: QuestService?
+    /// 최근에 깬 퀘스트. 메뉴 목록에만 쓰고, 경험치는 지급 즉시 펫에 들어간다.
+    private var recentQuests: [Quest] = []
     private var currentDisplaySlug = ""
     private var sheetCache: [String: SpriteSheet] = [:]
 
@@ -218,6 +221,7 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         startWatcher(for: selectedStatusSource)
 
         startBattleService()
+        startQuestService()
 
         // 첫 클릭이 원문 발췌로 떨어지지 않도록, 뜨자마자 한 번 요약해 둔다.
         // 클릭과 똑같은 선택 로직을 쓴다.
@@ -380,6 +384,101 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
               let display = sheet.manifest.displayName else { return slug }
         return display.components(separatedBy: " (").first ?? display
     }
+
+    /// GitHub PR·Linear 티켓을 훑어 새로 끝난 것에 경험치를 준다.
+    private func startQuestService() {
+        let service = QuestService()
+        service.onQuests = { [weak self] quests in
+            self?.award(quests)
+        }
+        service.start()
+        questService = service
+    }
+
+    /// 퀘스트 보상을 **지금 화면에 있는 펫**에게 준다. 토큰과 같은 규칙이다 —
+    /// 펫마다 경험치가 따로 쌓이므로 보상도 따로 들어가야 앞뒤가 맞는다.
+    private func award(_ quests: [Quest]) {
+        guard !quests.isEmpty else { return }
+        let gained = Double(quests.count) * QuestService.rewardPerQuest
+        petTokens[selectedPetSlug, default: 0] += gained
+        scheduleTokenSave()
+        currentPercent = XPModel.percent(tokens: petTokens[selectedPetSlug] ?? 0)
+        applyStage()
+
+        recentQuests = (quests.reversed() + recentQuests).prefix(20).map { $0 }
+        petView?.celebrate(Self.celebrationText(for: quests))
+        questLog("지급 \(quests.count)건 → +\(Int(gained)) EXP")
+    }
+
+    /// 한 번에 여러 개가 잡히기도 한다(5분 사이에 두 건을 끝냈거나, 앱이 꺼져 있던
+    /// 동안 쌓였을 때). 전부 나열하면 말풍선이 넘치므로 **가장 최근 것**만 이름을
+    /// 밝히고 나머지는 "외 N건" 으로 접는다 — 방금 끝낸 것이 알아보기 쉽다.
+    static func celebrationText(for quests: [Quest]) -> String {
+        let reward = Int(QuestService.rewardPerQuest * Double(quests.count))
+        let amount = numberFormatter.string(from: NSNumber(value: reward)) ?? "\(reward)"
+        guard let first = quests.last else { return "퀘스트 완료! +\(amount) EXP" }
+        if quests.count == 1 {
+            return "\(first.source.badge) \(first.name) 완료!\n+\(amount) EXP"
+        }
+        return "\(first.source.badge) \(first.name) 외 \(quests.count - 1)건 완료!\n+\(amount) EXP"
+    }
+
+    private static let numberFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        return f
+    }()
+
+    /// 최근에 깬 퀘스트 목록. 무엇으로 경험치가 올랐는지 확인하는 자리다 —
+    /// 토큰은 저절로 오르지만 퀘스트는 내가 한 일이라 되짚어 볼 수 있어야 한다.
+    private func makeQuestMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "퀘스트", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+
+        let reward = Int(QuestService.rewardPerQuest)
+        let amount = Self.numberFormatter.string(from: NSNumber(value: reward)) ?? "\(reward)"
+        let header = NSMenuItem(title: "PR·티켓 1건당 +\(amount) EXP · 5분마다 확인",
+                                action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        submenu.addItem(header)
+        submenu.addItem(.separator())
+
+        if recentQuests.isEmpty {
+            let empty = NSMenuItem(title: "아직 깬 퀘스트가 없어요", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+        } else {
+            for quest in recentQuests.prefix(10) {
+                let when = Self.questTimeFormatter.string(from: quest.completedAt)
+                let line = NSMenuItem(title: "\(when)  [\(quest.source.badge)] \(quest.name)",
+                                      action: nil, keyEquivalent: "")
+                line.toolTip = quest.title
+                line.isEnabled = false
+                submenu.addItem(line)
+            }
+        }
+
+        // Linear 는 키를 넣은 사람만 돈다. 왜 티켓이 안 잡히는지 여기서 알 수 있어야 한다.
+        if QuestService.linearAPIKey() == nil {
+            submenu.addItem(.separator())
+            let hint = NSMenuItem(title: "Linear 연동 안 됨 (키체인에 API 키 필요)",
+                                  action: nil, keyEquivalent: "")
+            hint.toolTip = "터미널에서 security add-generic-password -s \(QuestService.linearKeychainService)"
+                + " -a linear -w 로 키를 넣으면 티켓 퀘스트도 잡힙니다. README 참고."
+            hint.isEnabled = false
+            submenu.addItem(hint)
+        }
+
+        item.submenu = submenu
+        return item
+    }
+
+    private static let questTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MM/dd HH:mm"
+        return f
+    }()
 
     private func makeStareMenuItem() -> NSMenuItem {
         let item = NSMenuItem(title: "노려보기", action: nil, keyEquivalent: "")
@@ -612,6 +711,7 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         menu.addItem(resetItem)
 
         menu.addItem(.separator())
+        menu.addItem(makeQuestMenuItem())
         menu.addItem(makeBattleMenuItem())
         menu.addItem(makeStareMenuItem())
 
@@ -703,6 +803,10 @@ selectedStatusSource = Self.savedStatusSource(fallback: Self.availableStatusSour
         petTokens = [:]
         tokenSaveTimer?.invalidate(); tokenSaveTimer = nil
         savePetTokens()
+        // 퀘스트 지급 기록도 함께 지운다. 남겨 두면 이미 깬 것이 다시 잡히지 않아,
+        // 초기화 직후 PR·티켓을 올려도 새 기준선이 잡힐 때까지 조용해진다.
+        QuestService.resetHistory()
+        recentQuests = []
         currentPercent = 0
         applyStage()   // 단계가 0으로 떨어지고 refreshDisplayedPet 이 기본형으로 되돌린다
         rebuildMenu()

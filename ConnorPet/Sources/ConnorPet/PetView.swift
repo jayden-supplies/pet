@@ -176,6 +176,8 @@ final class PetView: NSView {
 
     /// 브리핑 말풍선이 떠 있는 시간. 여러 세션을 훑어 읽을 수 있어야 한다.
     static let briefingDuration: TimeInterval = 30
+    /// 퀘스트 축하 말풍선. 한 줄짜리라 브리핑만큼 오래 띄울 이유가 없다.
+    static let celebrationDuration: TimeInterval = 8
 
     /// 자고 있으면 먼저 깨우고 나서 말한다.
     ///
@@ -201,8 +203,16 @@ final class PetView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + ms / 1000, execute: work)
     }
 
-    private func speak(_ text: String) {
-        let duration = Self.briefingDuration
+    /// 퀘스트를 끝냈을 때. 점프를 한 번 재생하고 짧게 한마디 한다.
+    ///
+    /// 고정된 모션을 밀어내지 않는다 — 손으로 자세를 잡아 놓고 보는 중일 수 있는데
+    /// 축하가 그것을 덮으면 지시를 뺏는 셈이다. 말풍선만 띄운다.
+    func celebrate(_ text: String) {
+        if pinnedAnimation == nil { _ = playOnce(.jumping) }
+        speak(text, duration: Self.celebrationDuration)
+    }
+
+    private func speak(_ text: String, duration: TimeInterval = PetView.briefingDuration) {
         speaking = true
         applyDisplayAnimation()
         onSpeak?(text, duration)
