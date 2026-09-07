@@ -500,21 +500,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         applyStage()
 
         recentQuests = (quests.reversed() + recentQuests).prefix(20).map { $0 }
-        petView?.celebrate(Self.celebrationText(for: quests))
+        for text in Self.celebrationTexts(for: quests) {
+            petView?.enqueueCelebration(text)
+        }
         questLog("지급 \(quests.count)건 → +\(Int(gained)) EXP")
     }
 
     /// 한 번에 여러 개가 잡히기도 한다(5분 사이에 두 건을 끝냈거나, 앱이 꺼져 있던
-    /// 동안 쌓였을 때). 전부 나열하면 말풍선이 넘치므로 **가장 최근 것**만 이름을
-    /// 밝히고 나머지는 "외 N건" 으로 접는다 — 방금 끝낸 것이 알아보기 쉽다.
-    static func celebrationText(for quests: [Quest]) -> String {
-        let reward = Int(QuestService.rewardPerQuest * Double(quests.count))
-        let amount = numberFormatter.string(from: NSNumber(value: reward)) ?? "\(reward)"
-        guard let first = quests.last else { return "퀘스트 완료! +\(amount) EXP" }
-        if quests.count == 1 {
-            return "\(first.source.badge) \(first.name) 완료!\n+\(amount) EXP"
+    /// 동안 쌓였을 때). **하나씩 차례로** 띄우도록 문구를 나눠 돌려준다 — 한꺼번에
+    /// 부르면 말풍선이 같은 자리에 겹쳐 뒤엣것만 읽힌다.
+    ///
+    /// 다만 무한정 줄을 세우지는 않는다. 한 건에 \(PetView.celebrationDuration)초씩
+    /// 걸리므로 스무 건이 잡히면 2분 넘게 말풍선만 뜬다. `maxIndividual` 건까지만
+    /// 이름을 밝히고 나머지는 한 줄로 접는다.
+    static func celebrationTexts(for quests: [Quest]) -> [String] {
+        guard !quests.isEmpty else { return [] }
+        let maxIndividual = 4
+        let named = quests.suffix(maxIndividual)   // 최근 것부터 보여 준다
+        var lines = named.map { quest -> String in
+            "\(quest.source.badge) \(quest.name) 완료!\n+\(amount(1)) EXP"
         }
-        return "\(first.source.badge) \(first.name) 외 \(quests.count - 1)건 완료!\n+\(amount) EXP"
+        let rest = quests.count - named.count
+        if rest > 0 {
+            lines.append("그 밖에 \(rest)건 더 완료!\n+\(amount(rest)) EXP")
+        }
+        return lines
+    }
+
+    private static func amount(_ count: Int) -> String {
+        let reward = Int(QuestService.rewardPerQuest * Double(count))
+        return numberFormatter.string(from: NSNumber(value: reward)) ?? "\(reward)"
     }
 
     private static let numberFormatter: NumberFormatter = {

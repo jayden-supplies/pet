@@ -7,6 +7,11 @@ if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "battle" {
     runBattleSelfTest()
 }
 
+// 퀘스트 축하 말풍선이 겹치지 않고 하나씩 뜨는지: `CONNORPET_SELFTEST=celebrate swift run`.
+if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "celebrate" {
+    runCelebrationSelfTest()
+}
+
 // 퀘스트 지급 규칙과 실제 조회: `CONNORPET_SELFTEST=quest swift run`.
 if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "quest" {
     runQuestSelfTest()

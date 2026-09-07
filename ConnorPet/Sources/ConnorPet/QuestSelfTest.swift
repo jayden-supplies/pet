@@ -71,17 +71,29 @@ func runQuestSelfTest() -> Never {
     guard reward == 200_000 else { fail("건당 보상이 \(reward) 이다") }
     print("[selftest] 건당 보상 \(reward) EXP · 주기 \(Int(QuestService.pollInterval))초")
 
-    // 축하 문구 ── 숫자 서식과 "외 N건" 이 어긋나기 쉽다.
-    let one = AppDelegate.celebrationText(for: [quest("gh:b#1", "b#1", minutesAgo: 1)])
-    guard one.contains("200,000 EXP"), one.contains("b#1"), !one.contains("외") else {
+    // 축하 문구 ── 하나씩 나뉘어야 말풍선이 겹치지 않는다.
+    let one = AppDelegate.celebrationTexts(for: [quest("gh:b#1", "b#1", minutesAgo: 1)])
+    guard one.count == 1, one[0].contains("200,000 EXP"), one[0].contains("b#1") else {
         fail("1건 축하 문구가 이상하다: \(one)")
     }
-    let many = AppDelegate.celebrationText(for: fourth)
-    guard many.contains("400,000 EXP"), many.contains("외 1건") else {
-        fail("2건 축하 문구가 이상하다: \(many)")
+    let two = AppDelegate.celebrationTexts(for: fourth)
+    guard two.count == 2, two[0].contains("a#4"), two[1].contains("a#5"),
+          two.allSatisfy({ $0.contains("200,000 EXP") }) else {
+        fail("2건이 각각 한 줄씩 나와야 하는데: \(two)")
     }
-    print("[selftest] 축하 문구: \(one.replacingOccurrences(of: "\n", with: " / "))")
-    print("[selftest] 축하 문구: \(many.replacingOccurrences(of: "\n", with: " / "))")
+    // 스무 건이 한꺼번에 잡혀도 말풍선이 2분 넘게 이어지면 안 된다.
+    let flood = (1...20).map { quest("gh:c#\($0)", "c#\($0)", minutesAgo: Double(30 - $0)) }
+    let folded = AppDelegate.celebrationTexts(for: flood)
+    guard folded.count == 5, folded.last?.contains("그 밖에 16건") == true,
+          folded.last?.contains("3,200,000 EXP") == true else {
+        fail("20건이 접히지 않았다: \(folded.count)개 / \(folded.last ?? "없음")")
+    }
+    let seconds = Double(folded.count) * (PetView.celebrationDuration + PetView.celebrationGap)
+    guard seconds <= 40 else { fail("축하가 \(seconds)초나 이어진다") }
+    for line in two + [folded.last ?? ""] {
+        print("[selftest] 축하 문구: \(line.replacingOccurrences(of: "\n", with: " / "))")
+    }
+    print("[selftest] 20건 → 말풍선 \(folded.count)개, 총 \(Int(seconds))초")
 
     store.removePersistentDomain(forName: suiteName)
 

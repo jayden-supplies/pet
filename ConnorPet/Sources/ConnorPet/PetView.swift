@@ -179,8 +179,14 @@ final class PetView: NSView {
 
     /// 브리핑 말풍선이 떠 있는 시간. 여러 세션을 훑어 읽을 수 있어야 한다.
     static let briefingDuration: TimeInterval = 30
-    /// 퀘스트 축하 말풍선. 한 줄짜리라 브리핑만큼 오래 띄울 이유가 없다.
-    static let celebrationDuration: TimeInterval = 8
+    /// 퀘스트 축하 말풍선 하나가 떠 있는 시간. 한 줄짜리라 브리핑만큼 길 이유가 없고,
+    /// 여러 개가 줄줄이 이어질 수 있어 길면 지루해진다.
+    /// 자체검증이 6초씩 기다리지 않도록 환경 변수로 줄일 수 있게 열어 뒀다.
+    static let celebrationDuration: TimeInterval = ProcessInfo.processInfo
+        .environment["CONNORPET_CELEBRATION_SECONDS"].flatMap(Double.init) ?? 6
+    /// 축하와 축하 사이 간격. 0 으로 붙이면 앞 말풍선이 사라지는 프레임과 다음 것이
+    /// 뜨는 프레임이 겹쳐 두 개가 한 번에 보인다.
+    static let celebrationGap: TimeInterval = 0.5
 
     /// 자고 있으면 먼저 깨우고 나서 말한다.
     ///
@@ -206,14 +212,48 @@ final class PetView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + ms / 1000, execute: work)
     }
 
-    /// 퀘스트를 끝냈을 때. 점프를 한 번 재생하고 짧게 한마디 한다.
+    /// 아직 띄우지 못한 축하들. 한 번에 여러 퀘스트가 잡히면 여기에 줄을 선다.
+    private var celebrationQueue: [String] = []
+    /// 지금 떠 있는 말풍선이 축하인가(브리핑과 구분해야 이어 붙일지 판단할 수 있다).
+    private var celebrating = false
+    private var celebrationWork: DispatchWorkItem?
+
+    /// 퀘스트 축하를 줄 세운다. 한 번에 하나씩, 앞 것이 사라진 뒤에 다음이 뜬다 —
+    /// 동시에 부르면 말풍선이 같은 자리에 겹쳐 뒤엣것만 읽히기 때문이다.
     ///
-    /// 고정된 모션을 밀어내지 않는다 — 손으로 자세를 잡아 놓고 보는 중일 수 있는데
-    /// 축하가 그것을 덮으면 지시를 뺏는 셈이다. 말풍선만 띄운다.
-    func celebrate(_ text: String) {
-        if pinnedAnimation == nil { _ = playOnce(.jumping) }
-        speak(text, duration: Self.celebrationDuration)
+    /// 고정된 모션은 밀어내지 않는다. 손으로 자세를 잡아 놓고 보는 중일 수 있는데
+    /// 축하가 그것을 덮으면 지시를 뺏는 셈이다 — 말풍선과 점프만 쓴다.
+    func enqueueCelebration(_ text: String) {
+        celebrationQueue.append(text)
+        drainCelebrations()
     }
+
+    /// 줄에서 하나를 꺼내 띄운다.
+    ///
+    /// 무언가를 이미 말하는 중이면 아무것도 하지 않고 돌아간다. 그 말이 끝날 때
+    /// (`speak` 의 타이머나 `stopSpeaking`)가 이 함수를 다시 부르므로 줄은 저절로
+    /// 이어진다 — 브리핑을 보는 중에 축하가 끼어들어 말을 자르지 않는다.
+    private func drainCelebrations() {
+        guard !celebrationQueue.isEmpty, !speaking else { return }
+        celebrating = true
+        if pinnedAnimation == nil { _ = playOnce(.jumping) }
+        speak(celebrationQueue.removeFirst(), duration: Self.celebrationDuration)
+    }
+
+    /// 말풍선이 사라진 직후에 부른다. 간격을 두고 다음 축하로 넘어간다.
+    private func scheduleCelebrationDrain() {
+        guard !celebrationQueue.isEmpty else { return }
+        celebrationWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.celebrationWork = nil
+            self?.drainCelebrations()
+        }
+        celebrationWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.celebrationGap, execute: work)
+    }
+
+    /// 줄 서 있는 축하 개수. 자체검증이 본다.
+    var pendingCelebrations: Int { celebrationQueue.count }
 
     private func speak(_ text: String, duration: TimeInterval = PetView.briefingDuration) {
         speaking = true
@@ -222,8 +262,11 @@ final class PetView: NSView {
 
         speakingTimer?.invalidate()
         speakingTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-            self?.speaking = false
-            self?.applyDisplayAnimation()
+            guard let self else { return }
+            self.speaking = false
+            self.celebrating = false
+            self.applyDisplayAnimation()
+            self.scheduleCelebrationDrain()
         }
     }
 
@@ -234,8 +277,12 @@ final class PetView: NSView {
         speakingTimer = nil
         guard speaking else { return }
         speaking = false
+        celebrating = false
         onSilence?()
         applyDisplayAnimation()
+        // 클릭으로 말풍선을 닫았을 때도 줄이 이어져야 한다. 브리핑이 곧바로 이어지면
+        // drainCelebrations 가 speaking 을 보고 물러나고, 그 브리핑이 끝날 때 다시 걸린다.
+        scheduleCelebrationDrain()
     }
 
     // MARK: - Right-click motion menu
