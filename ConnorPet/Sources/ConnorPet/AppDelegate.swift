@@ -150,6 +150,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// 두고 주기적으로만 내려쓰고, 종료 시 한 번 더 확실히 쓴다.
     private var tokenSaveTimer: Timer?
     private var questService: QuestService?
+    /// Linear 키의 마지막 확인 결과. 설정 창이 보여 준다.
+    private var linearStatus: String?
     /// 최근에 깬 퀘스트. 메뉴 목록에만 쓰고, 경험치는 지급 즉시 펫에 들어간다.
     private var recentQuests: [Quest] = []
     private var currentDisplaySlug = ""
@@ -586,13 +588,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // Linear 는 키를 넣은 사람만 돈다. 왜 티켓이 안 잡히는지 여기서 알 수 있어야 한다.
-        if QuestService.linearAPIKey() == nil {
+        //
+        // 키체인을 읽지 않고 저장 여부 플래그만 본다 — 메뉴를 여는 것만으로 키체인
+        // 암호 창이 뜨면 곤란하다(LinearKeychain 참고).
+        if !LinearKeychain.isStored {
             submenu.addItem(.separator())
-            let hint = NSMenuItem(title: "Linear 연동 안 됨 (키체인에 API 키 필요)",
-                                  action: nil, keyEquivalent: "")
-            hint.toolTip = "터미널에서 security add-generic-password -s \(QuestService.linearKeychainService)"
-                + " -a linear -w 로 키를 넣으면 티켓 퀘스트도 잡힙니다. README 참고."
-            hint.isEnabled = false
+            let hint = NSMenuItem(title: "Linear 연동 안 됨 — 설정에서 API 키 넣기",
+                                  action: #selector(openSettingsFromMenu), keyEquivalent: "")
+            hint.target = self
+            hint.toolTip = "설정 창의 \"연동\" 에 Linear API 키를 넣으면 티켓 퀘스트도 잡힙니다."
             submenu.addItem(hint)
         }
 
@@ -1489,6 +1493,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 /// 경로(changePet / changeStatusSource / setEvolutionEnabled / toggleClaudeHooks
 /// 등)로 위임해, 어느 쪽에서 바꾸든 동작·저장·메뉴바 갱신이 동일하다.
 extension AppDelegate: SettingsActionsDelegate {
+    var settingsLinearKeyStored: Bool { LinearKeychain.isStored }
+    var settingsLinearStatus: String? { linearStatus }
+
+    /// 키를 저장하고 곧바로 통하는지 확인한다.
+    ///
+    /// 저장만 하고 끝내면 오타가 난 키도 "저장됨" 으로 보이고, 5분 뒤 아무것도
+    /// 안 잡히는데 이유를 알 수 없다. 확인이 실패하면 저장한 키를 다시 지운다 —
+    /// 안 통하는 키를 남겨 두면 다음 폴링마다 헛되이 거절당한다.
+    func settingsSaveLinearKey(_ key: String) {
+        linearStatus = "확인 중…"
+        settingsController?.refresh()
+        QuestService.verifyLinearKey(key) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let who):
+                LinearKeychain.save(key)
+                self.linearStatus = "연결됨 — \(who)"
+                questLog("Linear 키 확인 성공: \(who)")
+            case .failure(let error):
+                LinearKeychain.delete()
+                self.linearStatus = "확인 실패 — \(error.localizedDescription)"
+                questLog("Linear 키 확인 실패: \(error.localizedDescription)")
+            }
+            self.settingsController?.refresh()
+        }
+    }
+
+    func settingsDeleteLinearKey() {
+        LinearKeychain.delete()
+        linearStatus = nil
+        settingsController?.refresh()
+    }
+
     var settingsOrderedPets: [(slug: String, name: String)] {
         Self.availablePetSlugs.compactMap { slug in
             petDisplayNames[slug].map { (slug, $0) }

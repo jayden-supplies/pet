@@ -30,6 +30,13 @@ protocol SettingsActionsDelegate: AnyObject {
     var settingsFullDiskAccessGranted: Bool { get }
     func settingsOpenFullDiskAccess()
 
+    // Linear 연동 — 키 자체는 키체인에 있고 여기로 오가지 않는다. 저장 여부와
+    // 마지막 확인 결과만 주고받는다.
+    var settingsLinearKeyStored: Bool { get }
+    var settingsLinearStatus: String? { get }
+    func settingsSaveLinearKey(_ key: String)
+    func settingsDeleteLinearKey()
+
     // 대전 / 노려보기 (같은 wifi 상대)
     var settingsBattlePeers: [(id: String, name: String)] { get }
     func settingsChallenge(peerID: String)
@@ -67,8 +74,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     // 대전 신청/노려보기 버튼 → peer id 매핑 (rebuild 마다 다시 채운다)
     private var peerButtonMap: [Int: String] = [:]
+    /// 지금 화면에 있는 Linear 키 입력란. rebuild 마다 새로 만든다.
+    private weak var linearKeyField: NSSecureTextField?
 
     var isVisible: Bool { window?.isVisible ?? false }
+
 
     // MARK: - Show / refresh
 
@@ -291,12 +301,78 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let hooks = makeSwitch(on: d.settingsHooksInstalled, action: #selector(hooksToggled(_:)))
         let granted = d.settingsFullDiskAccessGranted
         let fdaButton = makeButton(title: granted ? "확인" : "열기", action: #selector(fdaPressed))
-        return [
+        var rows = [
             RowSpec(title: "Claude Code 상태 훅", subtitle: "헤롱헤롱(작업 완료) / 실패 표시", control: hooks),
             RowSpec(title: "전체 디스크 접근 권한",
                     subtitle: granted ? "허용됨 — 완료 알림으로 헤롱헤롱 감지" : "헤롱헤롱 알림 감지에 필요",
                     control: fdaButton),
         ]
+        rows += linearRows(d)
+        return rows
+    }
+
+    /// Linear API 키 입력. 키를 넣어야 티켓 Done 이 퀘스트로 잡힌다.
+    ///
+    /// 입력란은 `NSSecureTextField` 다 — 어깨너머로 읽히면 안 되는 값이고, 실수로
+    /// 스크린샷에 담기는 것도 막는다. 저장된 키를 여기에 되채우지 않는다. 그러려면
+    /// 키체인을 읽어야 하는데, 설정 창을 여는 것만으로 암호 창이 뜨게 된다.
+    private func linearRows(_ d: SettingsActionsDelegate) -> [RowSpec] {
+        let stored = d.settingsLinearKeyStored
+        let field = NSSecureTextField()
+        field.placeholderString = stored ? "바꾸려면 새 키" : "lin_api_…"
+        field.font = .systemFont(ofSize: 12)
+        field.target = self
+        field.action = #selector(linearKeySubmitted(_:))   // Return 으로도 저장
+        // 스택뷰는 우리가 준 frame 이 아니라 고유 크기로 배치한다. 빈 입력란의 고유
+        // 폭은 15pt 남짓이라 제약으로 못 박지 않으면 글자 한 자도 안 들어간다.
+        field.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            field.widthAnchor.constraint(equalToConstant: 140),
+            field.heightAnchor.constraint(equalToConstant: 22),
+        ])
+        linearKeyField = field
+
+        // 버튼 이름은 "저장" 으로 짧게 둔다. 저장이 곧 확인이라는 것은 보조문구가
+        // "확인 중…" → "연결됨 — …" 으로 바뀌며 알려 주고, 이름을 길게 잡으면
+        // 컨트롤이 넓어져 왼쪽 설명이 잘린다.
+        let stack = NSStackView(views: [field, makeButton(title: "저장", action: #selector(linearSavePressed))])
+        stack.orientation = .horizontal
+        stack.spacing = 6
+        stack.frame.size = stack.fittingSize
+
+        var rows = [RowSpec(title: "Linear API 키",
+                            subtitle: d.settingsLinearStatus
+                                ?? (stored ? "저장됨 — 티켓 Done 이 퀘스트로 잡혀요"
+                                           : "넣으면 티켓 Done 도 퀘스트가 돼요"),
+                            control: stack)]
+        // 키체인 항목은 앱의 코드 서명에 묶여 있고 ad-hoc 서명은 빌드마다 바뀐다.
+        // 암호 창이 왜 뜨는지 모르면 앱이 고장 난 줄 안다.
+        if stored {
+            rows.append(RowSpec(title: "키체인 암호를 물으면 「항상 허용」",
+                                subtitle: "항목이 앱 서명에 묶여 있어요. 앱은 실행당 한 번만 읽습니다",
+                                control: nil, dimmed: true))
+            rows.append(RowSpec(title: "Linear 키 삭제",
+                                control: makeButton(title: "삭제", action: #selector(linearDeletePressed)),
+                                destructive: true))
+        }
+        return rows
+    }
+
+    @objc private func linearSavePressed() { submitLinearKey() }
+    @objc private func linearKeySubmitted(_ sender: NSTextField) { submitLinearKey() }
+
+    private func submitLinearKey() {
+        guard let field = linearKeyField else { return }
+        let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        // 입력란은 곧바로 비운다. 값이 화면에 남아 있을 이유가 없다.
+        field.stringValue = ""
+        delegate?.settingsSaveLinearKey(key)
+    }
+
+    @objc private func linearDeletePressed() {
+        linearKeyField?.stringValue = ""
+        delegate?.settingsDeleteLinearKey()
     }
 
     private func battleRows(_ d: SettingsActionsDelegate) -> [RowSpec] {

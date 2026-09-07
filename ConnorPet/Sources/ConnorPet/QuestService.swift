@@ -48,8 +48,6 @@ final class QuestService {
     static let pollInterval: TimeInterval = 5 * 60
     /// 얼마나 옛것까지 볼지. 이보다 오래된 것은 "새로 끝난 것" 일 수가 없다.
     private static let lookbackDays = 7
-    /// 키체인에서 Linear 키를 찾을 이름.
-    static let linearKeychainService = "connor-pet-linear"
 
     /// 새로 끝난 퀘스트들. 메인 큐에서 불린다.
     var onQuests: (([Quest]) -> Void)?
@@ -262,23 +260,57 @@ final class QuestService {
         return quests
     }
 
-    /// 키체인에서 Linear 개인 API 키를 읽는다. 앱은 키를 파일로 복사하지 않는다 —
-    /// 넣고 지우는 것은 사용자가 `security` 명령으로 한다(README 참고).
-    static func linearAPIKey() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: linearKeychainService,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let key = String(data: data, encoding: .utf8)?
-                  .trimmingCharacters(in: .whitespacesAndNewlines),
-              !key.isEmpty
-        else { return nil }
-        return key
+    /// 키체인에 든 Linear 개인 API 키. 보관·읽기 규칙은 `LinearKeychain` 참고.
+    static func linearAPIKey() -> String? { LinearKeychain.read() }
+
+    /// 키가 실제로 통하는지 확인한다. 설정 창의 "저장하고 확인" 이 부른다 — 저장만
+    /// 하고 끝내면 오타가 난 키도 저장됐다고 보이고, 5분 뒤 조용히 아무것도 안 잡힌다.
+    ///
+    /// 이슈를 부르지 않고 `viewer` 만 묻는다. 키가 맞는지만 보면 되고, 그쪽이 빠르다.
+    static func verifyLinearKey(_ key: String, completion: @escaping (Result<String, Error>) -> Void) {
+        let query = #"{"query":"query { viewer { name organization { name } } }"}"#
+        var request = URLRequest(url: URL(string: "https://api.linear.app/graphql")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "Authorization")
+        request.httpBody = query.data(using: .utf8)
+        request.timeoutInterval = 20
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            let finish: (Result<String, Error>) -> Void = { result in
+                DispatchQueue.main.async { completion(result) }
+            }
+            if let error { finish(.failure(error)); return }
+            guard let data,
+                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else { finish(.failure(LinearKeyError.badResponse)); return }
+
+            // Linear 는 키가 틀려도 HTTP 200 에 errors 를 담아 보낸다. 상태 코드만
+            // 보면 잘못된 키를 통과시킨다.
+            if let errors = object["errors"] as? [[String: Any]] {
+                let message = errors.compactMap { $0["message"] as? String }.first
+                finish(.failure(LinearKeyError.rejected(message ?? "키가 거부됐어요")))
+                return
+            }
+            guard let payload = object["data"] as? [String: Any],
+                  let viewer = payload["viewer"] as? [String: Any],
+                  let name = viewer["name"] as? String
+            else { finish(.failure(LinearKeyError.badResponse)); return }
+            let org = (viewer["organization"] as? [String: Any])?["name"] as? String
+            finish(.success(org.map { "\(name) · \($0)" } ?? name))
+        }.resume()
+    }
+
+    enum LinearKeyError: LocalizedError {
+        case badResponse
+        case rejected(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .badResponse: return "Linear 응답을 읽지 못했어요"
+            case .rejected(let message): return message
+            }
+        }
     }
 
     // MARK: - Helpers

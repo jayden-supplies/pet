@@ -7,6 +7,11 @@ if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "battle" {
     runBattleSelfTest()
 }
 
+// Linear API 키 보관: `CONNORPET_SELFTEST=keychain swift run`.
+if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "keychain" {
+    runLinearKeychainSelfTest()
+}
+
 // 노려보기 알림에 뜨는 펫 얼굴: `CONNORPET_SELFTEST=portrait swift run`.
 if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "portrait" {
     runPortraitSelfTest()
