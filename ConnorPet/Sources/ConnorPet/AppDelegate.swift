@@ -221,6 +221,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         barAlwaysVisible = Self.savedBarAlwaysVisible(fallback: false)
         view.setBarAlwaysVisible(barAlwaysVisible)
         evolutionEnabled = Self.savedEvolutionEnabled(fallback: false)
+        // 실행 방식이 바뀌면 UserDefaults 도메인이 갈려 경험치가 사라진 것처럼 보인다.
+        // 예전 도메인에 값이 남아 있으면 한 번만 가져온다(XPMigration 참고).
+        if let moved = XPMigration.runIfNeeded() {
+            questLog(moved)
+        }
         petTokens = Self.savedPetTokens()
         view.onRequestWindowMove = { [weak win, weak self] newOrigin in
             win?.setFrameOrigin(newOrigin)

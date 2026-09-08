@@ -7,6 +7,11 @@ if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "battle" {
     runBattleSelfTest()
 }
 
+// 실행 방식이 바뀌었을 때 경험치 이관: `CONNORPET_SELFTEST=migration swift run`.
+if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "migration" {
+    runMigrationSelfTest()
+}
+
 // .app 번들 판별(전체 디스크 접근 안내를 가른다): `CONNORPET_SELFTEST=bundle swift run`.
 if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "bundle" {
     runBundleSelfTest()
