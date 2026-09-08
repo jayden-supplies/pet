@@ -85,6 +85,40 @@ func runMigrationSelfTest() -> Never {
     UserDefaults().removePersistentDomain(forName: fresh)
     print("[selftest] 이미 쌓인 값이 있으면 손대지 않는다")
 
+    // ── 손으로 가져오기(설정 창 버튼)가 쓰는 조각들 ──
+    //
+    // 자동 이관은 "지금 도메인이 비어 있을 때" 만 돈다. 이미 조금 쌓인 뒤에
+    // 알아차린 사람은 그 조건에 걸리지 않아 버튼이 필요하다.
+    let found = XPMigration.legacyTokens(from: [newerName, oldName])
+    guard found["charmander"] == 77_932_312, found["squirtle"] == 2_892 else {
+        failClean("예전 기록 훑기가 틀렸다: \(found)")
+    }
+    print("[selftest] 예전 기록 훑기: 펫 \(found.count)종")
+
+    // 0 이하인 값은 "가져올 게 있다" 로 세지 않는다 — 버튼이 헛되이 보인다.
+    let empty = "connor-pet.selftest.zero"
+    UserDefaults().removePersistentDomain(forName: empty)
+    UserDefaults(suiteName: empty)?.set(["charmander": 0.0], forKey: "petTokens")
+    guard XPMigration.legacyTokens(from: [empty]).isEmpty else {
+        UserDefaults().removePersistentDomain(forName: empty)
+        failClean("0 인 기록을 가져올 것으로 셌다")
+    }
+    UserDefaults().removePersistentDomain(forName: empty)
+    print("[selftest] 0 짜리 기록은 가져올 것으로 세지 않는다")
+
+    // 퀘스트 기록 합치기: 이미 있는 것은 다시 넣지 않고, 새것만 더한다.
+    let questTarget = "connor-pet.selftest.quests"
+    UserDefaults().removePersistentDomain(forName: questTarget)
+    guard let qt = UserDefaults(suiteName: questTarget) else { failClean("도메인 생성 실패") }
+    qt.set(["gh:a#1"], forKey: "questCreditedIDs")
+    let added = XPMigration.mergeQuestIDs(into: qt, from: [newerName, oldName])
+    let merged = Set(qt.stringArray(forKey: "questCreditedIDs") ?? [])
+    UserDefaults().removePersistentDomain(forName: questTarget)
+    guard added == 2, merged == ["gh:a#1", "gh:a#2", "linear:T-1"] else {
+        failClean("퀘스트 합치기가 틀렸다: 추가 \(added), 결과 \(merged.sorted())")
+    }
+    print("[selftest] 퀘스트 기록 합치기: 새것 \(added)건만 더했다")
+
     wipe()
     print("SELFTEST PASS")
     exit(0)

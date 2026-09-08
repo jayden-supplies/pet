@@ -1625,6 +1625,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 /// 경로(changePet / changeStatusSource / setEvolutionEnabled / toggleClaudeHooks
 /// 등)로 위임해, 어느 쪽에서 바꾸든 동작·저장·메뉴바 갱신이 동일하다.
 extension AppDelegate: SettingsActionsDelegate {
+    /// 예전 도메인에서 **실제로 늘어날** 양. 펫마다 (예전 값 − 지금 값)이 양수인 것만
+    /// 담는다.
+    ///
+    /// 예전 기록을 그대로 돌려주면, 이미 다 가져온 뒤에도 설정 창에 "가져오기" 가
+    /// 계속 보인다. `swift run` 으로 띄우면 지금 도메인이 예전 목록에 들어 있어
+    /// 자기 자신을 가져오라고 권하기도 한다. 늘어날 양으로 세면 둘 다 사라진다.
+    var settingsLegacyXP: [String: Double] {
+        var gain: [String: Double] = [:]
+        for (pet, value) in XPMigration.legacyTokens() {
+            let delta = value - (petTokens[pet] ?? 0)
+            if delta > 0 { gain[pet] = delta }
+        }
+        return gain
+    }
+
+    /// 예전 기록을 지금 펫들에 합친다.
+    ///
+    /// **펫마다 큰 쪽을 남긴다.** 덮어쓰기가 아니라 합치기라 지금 쌓인 게 더 많으면
+    /// 줄어들지 않는다 — 실수로 눌러도 손해가 없다.
+    ///
+    /// 경험치를 UserDefaults 에만 쓰면 안 된다. 앱이 메모리에 들고 있는 값을 다음
+    /// 저장 때 그대로 덮어쓰기 때문이다(그렇게 한 번 날렸다). 그래서 메모리 상태를
+    /// 먼저 고치고 저장까지 여기서 한다.
+    func settingsImportLegacyXP() -> String {
+        let legacy = XPMigration.legacyTokens()
+        guard !legacy.isEmpty else { return "가져올 예전 기록이 없어요." }
+
+        var gained: Double = 0
+        for (pet, value) in legacy {
+            let current = petTokens[pet] ?? 0
+            if value > current {
+                gained += value - current
+                petTokens[pet] = value
+            }
+        }
+        let addedQuests = XPMigration.mergeQuestIDs()
+        XPMigration.markDone()
+
+        savePetTokens()
+        currentPercent = XPModel.percent(tokens: petTokens[selectedPetSlug] ?? 0)
+        applyStage()
+        updateXPDetailWindow()
+
+        guard gained > 0 || addedQuests > 0 else {
+            return "이미 다 가져와 있어요. 바뀐 건 없습니다."
+        }
+        let amount = Self.numberFormatter.string(from: NSNumber(value: Int(gained))) ?? "\(Int(gained))"
+        var message = "경험치 \(amount) 을 가져왔어요."
+        if addedQuests > 0 { message += "\n퀘스트 지급 기록 \(addedQuests)건도 합쳤어요." }
+        return message
+    }
+
     var settingsLinearKeyStored: Bool { LinearKeychain.isStored }
     var settingsLinearStatus: String? { linearStatus }
 

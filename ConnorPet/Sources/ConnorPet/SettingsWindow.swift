@@ -23,6 +23,10 @@ protocol SettingsActionsDelegate: AnyObject {
 
     // 경험치
     func settingsResetAllXP()
+    /// 예전 실행 방식(swift run · 옛 .app)에 남아 있는 경험치. 비어 있으면 가져올 게 없다.
+    var settingsLegacyXP: [String: Double] { get }
+    /// 예전 기록을 지금 펫들에 합친다. 결과를 사람이 읽을 한 줄로 돌려준다.
+    func settingsImportLegacyXP() -> String
 
     // 연동
     var settingsHooksInstalled: Bool { get }
@@ -299,12 +303,57 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // 경험치 초기화 (버튼)
         let reset = makeButton(title: "초기화", action: #selector(resetPressed))
 
-        return [
+        var rows = [
             RowSpec(title: "펫 선택", control: popup),
             RowSpec(title: "진화 사용", subtitle: "경험치가 쌓이면 다음 단계로 진화", control: evo),
             RowSpec(title: "경험치 바 항상 표시", subtitle: "끄면 펫에 마우스를 올렸을 때만", control: bar),
-            RowSpec(title: "모든 경험치 초기화", control: reset),
         ]
+
+        // 예전 실행 방식에 남아 있는 경험치를 손으로 가져온다.
+        //
+        // 왜 버튼이 필요한가: 경험치는 UserDefaults 에 있고 어느 파일을 쓰는지는 번들
+        // 식별자가 정한다. 그래서 swift run → .app → dmg 로 갈아타면 저장소가 갈려
+        // 경험치가 사라진 것처럼 보인다. 자동 이관은 "지금 도메인이 비어 있을 때" 만
+        // 도는데, 이미 조금 쌓인 뒤에 알아차리면 그 조건에 걸리지 않는다.
+        if let row = legacyXPRow(d) { rows.append(row) }
+
+        rows.append(RowSpec(title: "모든 경험치 초기화", control: reset))
+        return rows
+    }
+
+    /// 가져올 예전 기록이 있을 때만 보이는 행. 없으면 nil 이라 설정 창이 깔끔하다.
+    private func legacyXPRow(_ d: SettingsActionsDelegate) -> RowSpec? {
+        let legacy = d.settingsLegacyXP
+        guard !legacy.isEmpty else { return nil }
+
+        let total = Int(legacy.values.reduce(0, +))
+        let amount = Self.decimal.string(from: NSNumber(value: total)) ?? "\(total)"
+        let pets = legacy.count == 1 ? "펫 1종" : "펫 \(legacy.count)종"
+        return RowSpec(title: "구 버전에서 경험치 가져오기",
+                       subtitle: "예전 기록 발견 — \(pets) · \(amount) 늘어나요",
+                       control: makeButton(title: "가져오기", action: #selector(importLegacyPressed)))
+    }
+
+    private static let decimal: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        return f
+    }()
+
+    @objc private func importLegacyPressed() {
+        guard let d = delegate else { return }
+        let legacy = d.settingsLegacyXP
+        let total = Int(legacy.values.reduce(0, +))
+        let amount = Self.decimal.string(from: NSNumber(value: total)) ?? "\(total)"
+        // 펫마다 큰 쪽을 남기는 합치기라 줄어들 일은 없지만, 경험치를 건드리는
+        // 동작이니 한 번 확인받는다.
+        guard BattleDialog.confirm(title: "예전 경험치 가져오기",
+                                   message: "예전 기록에서 \(amount) 을 가져옵니다.\n\n펫마다 더 많이 쌓인 쪽을 남기므로\n지금 경험치가 줄어들지는 않아요.",
+                                   confirmTitle: "가져오기") else { return }
+
+        let result = d.settingsImportLegacyXP()
+        rebuildContent()
+        BattleDialog.info(title: "가져오기 완료", message: result)
     }
 
     private func sourceRow(_ d: SettingsActionsDelegate) -> RowSpec {

@@ -26,6 +26,62 @@ enum XPMigration {
     private static let questIDsKey = "questCreditedIDs"
     private static let questBaselineKey = "questBaselineTaken"
 
+    /// 예전 도메인에 남아 있는 경험치를 훑는다. 설정 창이 "가져올 게 있는지" 를
+    /// 보여 주고, 손으로 가져오기를 누를 때 재료로 쓴다.
+    ///
+    /// 같은 펫이 여러 도메인에 있으면 가장 많이 쌓인 값을 남긴다.
+    static func legacyTokens(from domains: [String] = legacyDomains) -> [String: Double] {
+        var tokens: [String: Double] = [:]
+        for domain in domains {
+            guard let old = UserDefaults(suiteName: domain) else { continue }
+            for (pet, value) in (old.dictionary(forKey: tokensKey) as? [String: Double] ?? [:])
+            where value > 0 {
+                tokens[pet] = max(tokens[pet] ?? 0, value)
+            }
+        }
+        return tokens
+    }
+
+    /// 예전 도메인의 퀘스트 지급 기록. 경험치를 가져올 때 함께 합쳐야 한다 — 안 그러면
+    /// 예전에 올린 PR·티켓이 다시 새것으로 잡혀 경험치가 두 번 들어간다.
+    static func legacyQuestIDs(from domains: [String] = legacyDomains) -> [String] {
+        var ids: [String] = []
+        var seen = Set<String>()
+        for domain in domains {
+            guard let old = UserDefaults(suiteName: domain) else { continue }
+            for id in (old.stringArray(forKey: questIDsKey) ?? []) where !seen.contains(id) {
+                seen.insert(id)
+                ids.append(id)
+            }
+        }
+        return ids
+    }
+
+    /// 가져온 퀘스트 기록을 지금 도메인에 합친다. 경험치 자체는 호출부(AppDelegate)가
+    /// 자기 메모리 상태와 함께 다뤄야 한다 — 여기서 UserDefaults 만 고치면 앱이
+    /// 다음 저장 때 예전 값으로 덮어쓴다(실제로 그렇게 한 번 날렸다).
+    static func mergeQuestIDs(into target: UserDefaults = .standard,
+                              from domains: [String] = legacyDomains) -> Int {
+        let incoming = legacyQuestIDs(from: domains)
+        guard !incoming.isEmpty else { return 0 }
+        var ids = target.stringArray(forKey: questIDsKey) ?? []
+        var seen = Set(ids)
+        var added = 0
+        for id in incoming where !seen.contains(id) {
+            seen.insert(id)
+            ids.append(id)
+            added += 1
+        }
+        target.set(ids, forKey: questIDsKey)
+        target.set(true, forKey: questBaselineKey)
+        return added
+    }
+
+    /// 손으로 가져온 뒤에는 자동 이관이 다시 돌 이유가 없다.
+    static func markDone(in target: UserDefaults = .standard) {
+        target.set(true, forKey: doneKey)
+    }
+
     /// 필요하면 한 번만 옮긴다. 무엇을 옮겼는지 한 줄로 돌려준다(아무것도 안 했으면 nil).
     ///
     /// **이미 쌓인 값이 있으면 손대지 않는다.** 옮기는 것은 "이 도메인에는 경험치가
