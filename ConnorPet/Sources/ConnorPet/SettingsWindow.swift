@@ -23,8 +23,8 @@ protocol SettingsActionsDelegate: AnyObject {
 
     // 경험치
     func settingsResetAllXP()
-    /// 예전 실행 방식(swift run · 옛 .app)에 남아 있는 경험치. 비어 있으면 가져올 게 없다.
-    var settingsLegacyXP: [String: Double] { get }
+    /// 예전 실행 방식(swift run · 옛 .app)에 남은 기록을 가져올 수 있는지.
+    var settingsLegacyStatus: XPMigration.LegacyStatus { get }
     /// 예전 기록을 지금 펫들에 합친다. 결과를 사람이 읽을 한 줄로 돌려준다.
     func settingsImportLegacyXP() -> String
 
@@ -321,17 +321,34 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         return rows
     }
 
-    /// 가져올 예전 기록이 있을 때만 보이는 행. 없으면 nil 이라 설정 창이 깔끔하다.
+    /// 예전 기록이 하나라도 있으면 늘 보이는 행. 아예 없을 때만 nil 이다.
+    ///
+    /// 가져올 게 없을 때도 보여 주는 이유: 숨기면 기능이 없는 것처럼 보여서, 이미
+    /// 가져온 사람이 "가져오기가 어디 있나" 하고 찾게 된다. 상태를 문구로 밝히고
+    /// 버튼만 잠근다.
     private func legacyXPRow(_ d: SettingsActionsDelegate) -> RowSpec? {
-        let legacy = d.settingsLegacyXP
-        guard !legacy.isEmpty else { return nil }
+        let status = d.settingsLegacyStatus
+        guard status != .none else { return nil }
 
-        let total = Int(legacy.values.reduce(0, +))
-        let amount = Self.decimal.string(from: NSNumber(value: total)) ?? "\(total)"
-        let pets = legacy.count == 1 ? "펫 1종" : "펫 \(legacy.count)종"
-        return RowSpec(title: "구 버전에서 경험치 가져오기",
-                       subtitle: "예전 기록 발견 — \(pets) · \(amount) 늘어나요",
-                       control: makeButton(title: "가져오기", action: #selector(importLegacyPressed)))
+        let button = makeButton(title: "가져오기", action: #selector(importLegacyPressed))
+        func won(_ value: Double) -> String {
+            Self.decimal.string(from: NSNumber(value: Int(value))) ?? "\(Int(value))"
+        }
+
+        switch status {
+        case .none:
+            return nil
+        case .importable(_, let gain):
+            let pets = gain.count == 1 ? "펫 1종" : "펫 \(gain.count)종"
+            return RowSpec(title: "구 버전에서 경험치 가져오기",
+                           subtitle: "예전 기록 발견 — \(pets) · \(won(gain.values.reduce(0, +))) 늘어나요",
+                           control: button)
+        case .alreadyMerged(let found):
+            button.isEnabled = false
+            return RowSpec(title: "구 버전에서 경험치 가져오기",
+                           subtitle: "예전 기록 \(won(found.values.reduce(0, +))) — 이미 다 가져왔어요",
+                           control: button, dimmed: true)
+        }
     }
 
     private static let decimal: NumberFormatter = {
@@ -341,9 +358,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }()
 
     @objc private func importLegacyPressed() {
-        guard let d = delegate else { return }
-        let legacy = d.settingsLegacyXP
-        let total = Int(legacy.values.reduce(0, +))
+        guard let d = delegate,
+              case .importable(_, let gain) = d.settingsLegacyStatus else { return }
+        let total = Int(gain.values.reduce(0, +))
         let amount = Self.decimal.string(from: NSNumber(value: total)) ?? "\(total)"
         // 펫마다 큰 쪽을 남기는 합치기라 줄어들 일은 없지만, 경험치를 건드리는
         // 동작이니 한 번 확인받는다.

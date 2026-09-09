@@ -26,6 +26,40 @@ enum XPMigration {
     private static let questIDsKey = "questCreditedIDs"
     private static let questBaselineKey = "questBaselineTaken"
 
+    /// 설정 창에 "구 버전에서 경험치 가져오기" 를 어떻게 보여 줄지.
+    ///
+    /// 처음에는 "늘어날 게 없으면 행을 숨긴다" 로 만들었는데, 그러면 기능이 아예
+    /// 없는 것처럼 보인다 — 예전 기록을 이미 가져온 사람이 "가져오기가 어디 있나"
+    /// 하고 찾게 된다. 예전 기록이 하나라도 있으면 행은 늘 보여 주고, 가져올 게
+    /// 없을 때는 그 사실을 문구로 밝힌다.
+    enum LegacyStatus: Equatable {
+        /// 예전 기록이 아예 없다. 이때만 행을 감춘다 — 보여 줄 것이 없다.
+        case none
+        /// 가져오면 늘어난다. `gain` 은 펫마다 늘어날 양.
+        case importable(found: [String: Double], gain: [String: Double])
+        /// 예전 기록은 있지만 지금이 더 많거나 같다.
+        case alreadyMerged(found: [String: Double])
+
+        var found: [String: Double] {
+            switch self {
+            case .none: return [:]
+            case .importable(let found, _), .alreadyMerged(let found): return found
+            }
+        }
+    }
+
+    /// 예전 기록과 지금 경험치를 견줘 상태를 정한다. 화면 코드가 이 값만 보고 그린다.
+    static func status(current: [String: Double],
+                       legacy: [String: Double]) -> LegacyStatus {
+        guard !legacy.isEmpty else { return .none }
+        var gain: [String: Double] = [:]
+        for (pet, value) in legacy {
+            let delta = value - (current[pet] ?? 0)
+            if delta > 0 { gain[pet] = delta }
+        }
+        return gain.isEmpty ? .alreadyMerged(found: legacy) : .importable(found: legacy, gain: gain)
+    }
+
     /// 예전 도메인에 남아 있는 경험치를 훑는다. 설정 창이 "가져올 게 있는지" 를
     /// 보여 주고, 손으로 가져오기를 누를 때 재료로 쓴다.
     ///

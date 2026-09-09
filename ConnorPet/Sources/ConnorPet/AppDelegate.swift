@@ -1625,19 +1625,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 /// 경로(changePet / changeStatusSource / setEvolutionEnabled / toggleClaudeHooks
 /// 등)로 위임해, 어느 쪽에서 바꾸든 동작·저장·메뉴바 갱신이 동일하다.
 extension AppDelegate: SettingsActionsDelegate {
-    /// 예전 도메인에서 **실제로 늘어날** 양. 펫마다 (예전 값 − 지금 값)이 양수인 것만
-    /// 담는다.
-    ///
-    /// 예전 기록을 그대로 돌려주면, 이미 다 가져온 뒤에도 설정 창에 "가져오기" 가
-    /// 계속 보인다. `swift run` 으로 띄우면 지금 도메인이 예전 목록에 들어 있어
-    /// 자기 자신을 가져오라고 권하기도 한다. 늘어날 양으로 세면 둘 다 사라진다.
-    var settingsLegacyXP: [String: Double] {
-        var gain: [String: Double] = [:]
-        for (pet, value) in XPMigration.legacyTokens() {
-            let delta = value - (petTokens[pet] ?? 0)
-            if delta > 0 { gain[pet] = delta }
-        }
-        return gain
+    /// 예전 기록을 가져올 수 있는지. 판정은 `XPMigration.status` 가 한다.
+    var settingsLegacyStatus: XPMigration.LegacyStatus {
+        XPMigration.status(current: petTokens, legacy: XPMigration.legacyTokens())
     }
 
     /// 예전 기록을 지금 펫들에 합친다.

@@ -119,6 +119,43 @@ func runMigrationSelfTest() -> Never {
     }
     print("[selftest] 퀘스트 기록 합치기: 새것 \(added)건만 더했다")
 
+    // ── 설정 창이 무엇을 보여 줄지 정하는 세 상태 ──
+    //
+    // 처음에는 "늘어날 게 없으면 행을 숨긴다" 로 만들었는데, 그러면 기능이 아예 없는
+    // 것처럼 보였다. 예전 기록이 있으면 늘 보여 주고 상태만 달라야 한다.
+    let legacyFound = ["charmander": 77_932_312.0, "squirtle": 2_892.0]
+
+    guard XPMigration.status(current: [:], legacy: [:]) == .none else {
+        failClean("예전 기록이 없는데 행을 보여 준다")
+    }
+    print("[selftest] 예전 기록 없음 → 행 숨김")
+
+    // 지금이 적으면 가져올 수 있고, 늘어날 양만 센다.
+    let importable = XPMigration.status(current: ["charmander": 12_690_275.0], legacy: legacyFound)
+    guard case .importable(let found, let gain) = importable else {
+        failClean("가져올 수 있어야 하는데 \(importable)")
+    }
+    guard found == legacyFound,
+          Int(gain["charmander"] ?? 0) == 65_242_037,
+          Int(gain["squirtle"] ?? 0) == 2_892 else {
+        failClean("늘어날 양이 틀렸다: \(gain)")
+    }
+    print("[selftest] 지금이 적음 → 가져오기 가능, 늘어날 양 \(Int(gain.values.reduce(0,+)))")
+
+    // 지금이 더 많으면 행은 보이되 버튼은 잠긴다. 숨기지 않는 것이 요점이다.
+    let already = XPMigration.status(current: ["charmander": 123_369_846.0, "squirtle": 2_892.0],
+                                     legacy: legacyFound)
+    guard case .alreadyMerged(let shown) = already, shown == legacyFound else {
+        failClean("이미 가져온 상태여야 하는데 \(already)")
+    }
+    print("[selftest] 지금이 더 많음 → 행은 보이고 '이미 다 가져왔어요'")
+
+    // 같은 값이면 가져올 것이 없다 — 같음도 이미 가져온 것으로 본다.
+    guard case .alreadyMerged = XPMigration.status(current: legacyFound, legacy: legacyFound) else {
+        failClean("같은 값인데 가져올 수 있다고 한다")
+    }
+    print("[selftest] 값이 같음 → 이미 가져온 것으로 본다")
+
     wipe()
     print("SELFTEST PASS")
     exit(0)
