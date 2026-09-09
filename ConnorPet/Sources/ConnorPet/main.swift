@@ -7,6 +7,11 @@ if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "battle" {
     runBattleSelfTest()
 }
 
+// 오버레이 창들이 펫과 같은 층에 있는지: `CONNORPET_SELFTEST=overlay swift run`.
+if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "overlay" {
+    runOverlayLayerSelfTest()
+}
+
 // 실행 방식이 바뀌었을 때 경험치 이관: `CONNORPET_SELFTEST=migration swift run`.
 if ProcessInfo.processInfo.environment["CONNORPET_SELFTEST"] == "migration" {
     runMigrationSelfTest()
