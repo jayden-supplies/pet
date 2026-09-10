@@ -42,6 +42,8 @@ protocol SettingsActionsDelegate: AnyObject {
     func settingsDeleteLinearKey()
 
     // 대전 / 노려보기 (같은 wifi 상대)
+    /// 이 맥에 쌓인 대전 전적 한 줄. 예: "12승 8패 · 승률 60%"
+    var settingsBattleRecord: String { get }
     var settingsBattlePeers: [(id: String, name: String)] { get }
     func settingsChallenge(peerID: String)
     func settingsStare(peerID: String)
@@ -496,11 +498,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func battleRows(_ d: SettingsActionsDelegate) -> [RowSpec] {
+        // 전적은 상대가 없어도 보여 준다 — 지난 성적을 보려고 여는 자리이기도 하다.
+        let reward = Self.decimal.string(from: NSNumber(value: Int(BattleRecord.winReward)))
+            ?? "\(Int(BattleRecord.winReward))"
+        var rows = [RowSpec(title: "대전 전적",
+                            subtitle: "\(d.settingsBattleRecord) · 이기면 +\(reward) EXP",
+                            control: nil, dimmed: true)]
+
         let peers = d.settingsBattlePeers
         guard !peers.isEmpty else {
-            return [RowSpec(title: "주변에 상대가 없어요", subtitle: "같은 Wi-Fi의 다른 ConnorPet을 찾는 중", control: nil, dimmed: true)]
+            rows.append(RowSpec(title: "주변에 상대가 없어요",
+                                subtitle: "같은 Wi-Fi의 다른 ConnorPet을 찾는 중",
+                                control: nil, dimmed: true))
+            return rows
         }
-        var rows: [RowSpec] = []
         for (i, peer) in peers.enumerated() {
             let stack = NSStackView()
             stack.orientation = .horizontal

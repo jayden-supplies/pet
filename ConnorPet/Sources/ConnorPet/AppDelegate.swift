@@ -533,12 +533,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             myRole: myRole,
             outcome: outcome
         )
+        // 전적과 보상은 **전투 창이 닫힐 때** 처리한다. 지금 주면 축하 말풍선이
+        // 전투 화면 위에 겹쳐 뜬다. 창이 일찍 닫혀도(클릭으로 넘겨도) 승부는 이미
+        // 났으므로 한 번은 적힌다 — onClosed 는 한 번만 불린다.
+        let didWin = outcome.winner == myRole
         let win = BattleWindow(view: view) { [weak self] in
             self?.battleWindow = nil
+            self?.finishBattle(won: didWin)
         }
         battleWindow = win
         win.present() // click-through overlay: show without activating/stealing focus
         view.start()
+    }
+
+    /// 전투가 끝났다. 전적을 적고, 이겼으면 경험치를 준다.
+    private func finishBattle(won: Bool) {
+        let record = BattleRecord.record(won: won)
+        questLog("대전 \(won ? "승" : "패") → \(record.summary)")
+        settingsController?.refresh()
+
+        guard won else { return }
+        // 보상은 **지금 화면에 있는 펫**에게. 토큰·퀘스트와 같은 규칙이다.
+        petTokens[selectedPetSlug, default: 0] += BattleRecord.winReward
+        scheduleTokenSave()
+        currentPercent = XPModel.percent(tokens: petTokens[selectedPetSlug] ?? 0)
+        applyStage()
+        updateXPDetailWindow()
+
+        let amount = Self.numberFormatter.string(from: NSNumber(value: Int(BattleRecord.winReward)))
+            ?? "\(Int(BattleRecord.winReward))"
+        petView?.enqueueCelebration("대전 승리! \(record.wins)승째\n+\(amount) EXP")
     }
 
     private func showInfo(title: String, text: String) {
@@ -1120,6 +1144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 퀘스트 지급 기록도 함께 지운다. 남겨 두면 이미 깬 것이 다시 잡히지 않아,
         // 초기화 직후 PR·티켓을 올려도 새 기준선이 잡힐 때까지 조용해진다.
         QuestService.resetHistory()
+        BattleRecord.reset()
         recentQuests = []
         currentPercent = 0
         applyStage()   // 단계가 0으로 떨어지고 refreshDisplayedPet 이 기본형으로 되돌린다
@@ -1625,6 +1650,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 /// 경로(changePet / changeStatusSource / setEvolutionEnabled / toggleClaudeHooks
 /// 등)로 위임해, 어느 쪽에서 바꾸든 동작·저장·메뉴바 갱신이 동일하다.
 extension AppDelegate: SettingsActionsDelegate {
+    var settingsBattleRecord: String { BattleRecord.load().summary }
+
     /// 예전 기록을 가져올 수 있는지. 판정은 `XPMigration.status` 가 한다.
     var settingsLegacyStatus: XPMigration.LegacyStatus {
         XPMigration.status(current: petTokens, legacy: XPMigration.legacyTokens())
